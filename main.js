@@ -34,7 +34,7 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix9";
+const BUILD_VERSION = "2026.02.15-hotfix11";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
@@ -335,10 +335,13 @@ function createPostPipeline(renderer, camera, width, height) {
         vec3 vy = getViewPos(vUv + dv, texture2D(tDepth, vUv + dv).r) - vp;
         vec3 n = normalize(cross(vx, vy));
 
-        if (vUv.x < 0.5) {
+        if (vUv.x < (1.0 / 3.0)) {
           float d = clamp(depth, 0.0, 1.0);
           float vis = pow(1.0 - d, 2.2);
           gl_FragColor = vec4(vec3(vis), 1.0);
+        } else if (vUv.x < (2.0 / 3.0)) {
+          vec3 sceneCol = texture2D(tScene, vUv).rgb;
+          gl_FragColor = vec4(sceneCol, 1.0);
         } else {
           vec3 normalVis = n * 0.5 + 0.5;
           gl_FragColor = vec4(normalVis, 1.0);
@@ -575,7 +578,7 @@ async function startThree() {
   let netState = "connecting";
 
   function updateBadge() {
-    setBadge(`Build ${BUILD_VERSION} | Depth (L) + Normals (R) | ${paintMode.toUpperCase()} (P) | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`Build ${BUILD_VERSION} | Depth | Scene | Normals | ${paintMode.toUpperCase()} (P) | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function paintAtWorld(x, z, mode) {
@@ -874,3 +877,5 @@ async function startThree() {
 }
 
 startThree();
+
+
