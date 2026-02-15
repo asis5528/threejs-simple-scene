@@ -306,7 +306,8 @@ async function startThree() {
   ball.position.set(0, radius, 0);
   ball.castShadow = true;
   scene.add(ball);
-  ball.add(makeNameSprite(playerName));
+  const localLabel = makeNameSprite(playerName);
+  scene.add(localLabel);
 
   const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false };
   let paintMode = "draw";
@@ -339,6 +340,7 @@ async function startThree() {
   const remotes = new Map();
   let sendState = null;
   let sendPaint = null;
+  let sendHello = null;
   let room = null;
   let netState = "connecting";
 
@@ -370,7 +372,7 @@ async function startThree() {
     scene.add(remoteMesh);
 
     const label = makeNameSprite(remoteName || `Player-${remoteId}`);
-    remoteMesh.add(label);
+    scene.add(label);
 
     const now = performance.now();
     const remote = {
@@ -397,17 +399,21 @@ async function startThree() {
 
       const [send, get] = room.makeAction("state");
       const [sendPaintAction, getPaintAction] = room.makeAction("paint");
+      const [sendHelloAction, getHelloAction] = room.makeAction("hello");
       sendState = send;
       sendPaint = sendPaintAction;
+      sendHello = sendHelloAction;
 
       room.onPeerJoin((peerId) => {
         if (sendState) broadcastState(peerId);
+        if (sendHello) sendHello({ t: Date.now() }, peerId);
       });
 
       room.onPeerLeave((peerId) => {
         const remote = remotes.get(peerId);
         if (!remote) return;
         scene.remove(remote.mesh);
+        scene.remove(remote.label);
         remote.mesh.geometry.dispose();
         remote.mesh.material.dispose();
         if (remote.label && remote.label.material && remote.label.material.map) remote.label.material.map.dispose();
@@ -440,6 +446,10 @@ async function startThree() {
         paintAtWorld(payload.x || 0, payload.z || 0, payload.m === "erase" ? "erase" : "draw");
       });
 
+      getHelloAction((_, peerId) => {
+        broadcastState(peerId);
+      });
+
       netState = "online";
       updateBadge();
 
@@ -459,6 +469,7 @@ async function startThree() {
   const clock = new THREE.Clock();
   let netTick = 0;
   let paintTick = 0;
+  let helloTick = 0;
   function broadcastState(targetPeerId) {
     if (!sendState) return;
     const payload = {
@@ -544,9 +555,12 @@ async function startThree() {
       const alpha = 1 - Math.exp(-18 * dt);
       remote.mesh.position.lerp(predicted, alpha);
       remote.mesh.quaternion.slerp(remote.netQuat, 1 - Math.exp(-14 * dt));
+      remote.label.position.set(remote.mesh.position.x, remote.mesh.position.y + 1.2, remote.mesh.position.z);
+      remote.label.quaternion.copy(camera.quaternion);
 
       if (performance.now() - remote.lastSeen > 30000) {
         scene.remove(remote.mesh);
+        scene.remove(remote.label);
         remote.mesh.geometry.dispose();
         remote.mesh.material.dispose();
         if (remote.label && remote.label.material && remote.label.material.map) remote.label.material.map.dispose();
@@ -560,6 +574,8 @@ async function startThree() {
     const targetCam = new THREE.Vector3(ball.position.x, 8, ball.position.z + 11);
     camera.position.lerp(targetCam, 1 - Math.exp(-6 * dt));
     camera.lookAt(ball.position.x, radius * 0.7, ball.position.z);
+    localLabel.position.set(ball.position.x, ball.position.y + 1.2, ball.position.z);
+    localLabel.quaternion.copy(camera.quaternion);
 
     paintAtWorld(ball.position.x, ball.position.z, paintMode);
     paintTick += dt;
@@ -572,6 +588,12 @@ async function startThree() {
     if (sendState && netTick > 1 / 20) {
       netTick = 0;
       broadcastState();
+    }
+
+    helloTick += dt;
+    if (sendHello && helloTick > 1.0) {
+      helloTick = 0;
+      sendHello({ t: Date.now() });
     }
 
     renderer.render(scene, camera);
