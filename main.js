@@ -1,11 +1,11 @@
 ﻿import * as THREE from "./vendor/three.module.js";
-import { EffectComposer } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/RenderPass.js";
-import { SSRPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSRPass.js";
-import { SSAOPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSAOPass.js";
-import { SAOPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SAOPass.js";
-import { UnrealBloomPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { RoomEnvironment } from "https://unpkg.com/three@0.162.0/examples/jsm/environments/RoomEnvironment.js";
+import { EffectComposer } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/EffectComposer.js?module";
+import { RenderPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/RenderPass.js?module";
+import { SSRPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSRPass.js?module";
+import { SSAOPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSAOPass.js?module";
+import { SAOPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SAOPass.js?module";
+import { UnrealBloomPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/UnrealBloomPass.js?module";
+import { RoomEnvironment } from "https://unpkg.com/three@0.162.0/examples/jsm/environments/RoomEnvironment.js?module";
 
 
 const canvas = document.getElementById("app");
