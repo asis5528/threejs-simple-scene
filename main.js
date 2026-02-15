@@ -34,7 +34,7 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix6";
+const BUILD_VERSION = "2026.02.15-hotfix7";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
@@ -197,6 +197,222 @@ function createStartUI(defaultName, defaultRoom) {
 
     setTimeout(() => nameInput.focus(), 0);
   });
+}
+
+function createPostPipeline(renderer, camera, width, height) {
+  const rtOpts = {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    format: THREE.RGBAFormat,
+    type: THREE.HalfFloatType,
+    depthBuffer: true,
+    stencilBuffer: false,
+  };
+
+  const sceneRT = new THREE.WebGLRenderTarget(width, height, rtOpts);
+  sceneRT.depthTexture = new THREE.DepthTexture(width, height, THREE.UnsignedShortType);
+  sceneRT.depthTexture.minFilter = THREE.NearestFilter;
+  sceneRT.depthTexture.magFilter = THREE.NearestFilter;
+
+  const bloomA = new THREE.WebGLRenderTarget(width, height, { ...rtOpts, depthBuffer: false });
+  const bloomB = new THREE.WebGLRenderTarget(width, height, { ...rtOpts, depthBuffer: false });
+
+  const postScene = new THREE.Scene();
+  const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial());
+  postScene.add(quad);
+
+  const thresholdMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tInput: { value: null },
+      threshold: { value: 1.0 },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform sampler2D tInput;
+      uniform float threshold;
+      void main() {
+        vec3 c = texture2D(tInput, vUv).rgb;
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        float m = smoothstep(threshold, threshold + 0.45, l);
+        gl_FragColor = vec4(c * m, 1.0);
+      }
+    `,
+  });
+
+  const blurMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tInput: { value: null },
+      texelSize: { value: new THREE.Vector2(1 / width, 1 / height) },
+      direction: { value: new THREE.Vector2(1, 0) },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform sampler2D tInput;
+      uniform vec2 texelSize;
+      uniform vec2 direction;
+      void main() {
+        vec2 o = direction * texelSize;
+        vec3 c = texture2D(tInput, vUv).rgb * 0.227027;
+        c += texture2D(tInput, vUv + o * 1.384615).rgb * 0.316216;
+        c += texture2D(tInput, vUv - o * 1.384615).rgb * 0.316216;
+        c += texture2D(tInput, vUv + o * 3.230769).rgb * 0.070270;
+        c += texture2D(tInput, vUv - o * 3.230769).rgb * 0.070270;
+        gl_FragColor = vec4(c, 1.0);
+      }
+    `,
+  });
+
+  const compositeMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tScene: { value: null },
+      tBloom: { value: null },
+      tDepth: { value: null },
+      projectionMatrixInv: { value: new THREE.Matrix4() },
+      projectionMatrixCam: { value: new THREE.Matrix4() },
+      viewMatrixInv: { value: new THREE.Matrix4() },
+      resolution: { value: new THREE.Vector2(width, height) },
+      bloomStrength: { value: 0.38 },
+      ssrStrength: { value: 0.22 },
+      maxSteps: { value: 24.0 },
+      stride: { value: 0.18 },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform sampler2D tScene;
+      uniform sampler2D tBloom;
+      uniform sampler2D tDepth;
+      uniform mat4 projectionMatrixInv;
+      uniform mat4 projectionMatrixCam;
+      uniform mat4 viewMatrixInv;
+      uniform float bloomStrength;
+      uniform float ssrStrength;
+      uniform float maxSteps;
+      uniform float stride;
+
+      vec3 getViewPos(vec2 uv, float depth) {
+        float z = depth * 2.0 - 1.0;
+        vec4 clip = vec4(uv * 2.0 - 1.0, z, 1.0);
+        vec4 view = projectionMatrixInv * clip;
+        return view.xyz / max(view.w, 0.0001);
+      }
+
+      vec2 projectUv(vec3 viewPos) {
+        vec4 clip = projectionMatrixCam * vec4(viewPos, 1.0);
+        vec2 ndc = clip.xy / max(clip.w, 0.0001);
+        return ndc * 0.5 + 0.5;
+      }
+
+      void main() {
+        vec3 base = texture2D(tScene, vUv).rgb;
+        vec3 bloom = texture2D(tBloom, vUv).rgb * bloomStrength;
+        float depth = texture2D(tDepth, vUv).r;
+
+        vec3 refl = vec3(0.0);
+        if (depth < 0.999) {
+          vec3 vp = getViewPos(vUv, depth);
+          vec2 du = vec2(1.0 / resolution.x, 0.0);
+          vec2 dv = vec2(0.0, 1.0 / resolution.y);
+          vec3 vx = getViewPos(vUv + du, texture2D(tDepth, vUv + du).r) - vp;
+          vec3 vy = getViewPos(vUv + dv, texture2D(tDepth, vUv + dv).r) - vp;
+          vec3 n = normalize(cross(vx, vy));
+          vec3 v = normalize(vp);
+          vec3 r = normalize(reflect(v, n));
+
+          vec4 world = viewMatrixInv * vec4(vp, 1.0);
+          float floorMask = smoothstep(0.45, 0.0, abs(world.y));
+
+          vec3 ray = vp;
+          vec3 hitColor = vec3(0.0);
+          float hit = 0.0;
+          for (int i = 0; i < 32; i++) {
+            if (float(i) >= maxSteps) break;
+            ray += r * stride;
+            vec2 uvp = projectUv(ray);
+            if (uvp.x < 0.0 || uvp.x > 1.0 || uvp.y < 0.0 || uvp.y > 1.0) break;
+            float d = texture2D(tDepth, uvp).r;
+            if (d >= 0.999) continue;
+            vec3 sv = getViewPos(uvp, d);
+            if (abs(sv.z - ray.z) < 0.22) {
+              hitColor = texture2D(tScene, uvp).rgb;
+              hit = 1.0;
+              break;
+            }
+          }
+          refl = hitColor * hit * floorMask * ssrStrength;
+        }
+
+        vec3 color = base + bloom + refl;
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `,
+  });
+
+  function pass(material, inputTex, outputRT) {
+    quad.material = material;
+    if (material.uniforms.tInput) material.uniforms.tInput.value = inputTex;
+    renderer.setRenderTarget(outputRT);
+    renderer.render(postScene, postCamera);
+  }
+
+  function setSize(w, h) {
+    sceneRT.setSize(w, h);
+    bloomA.setSize(w, h);
+    bloomB.setSize(w, h);
+    if (sceneRT.depthTexture) {
+      sceneRT.depthTexture.dispose();
+      sceneRT.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedShortType);
+      sceneRT.depthTexture.minFilter = THREE.NearestFilter;
+      sceneRT.depthTexture.magFilter = THREE.NearestFilter;
+    }
+    blurMat.uniforms.texelSize.value.set(1 / w, 1 / h);
+    compositeMat.uniforms.resolution.value.set(w, h);
+  }
+
+  function render(scene, cameraRef) {
+    renderer.setRenderTarget(sceneRT);
+    renderer.render(scene, cameraRef);
+
+    pass(thresholdMat, sceneRT.texture, bloomA);
+    blurMat.uniforms.direction.value.set(1, 0);
+    pass(blurMat, bloomA.texture, bloomB);
+    blurMat.uniforms.direction.value.set(0, 1);
+    pass(blurMat, bloomB.texture, bloomA);
+
+    compositeMat.uniforms.tScene.value = sceneRT.texture;
+    compositeMat.uniforms.tBloom.value = bloomA.texture;
+    compositeMat.uniforms.tDepth.value = sceneRT.depthTexture;
+    compositeMat.uniforms.projectionMatrixInv.value.copy(cameraRef.projectionMatrixInverse);
+    compositeMat.uniforms.projectionMatrixCam.value.copy(cameraRef.projectionMatrix);
+    compositeMat.uniforms.viewMatrixInv.value.copy(cameraRef.matrixWorld);
+
+    quad.material = compositeMat;
+    renderer.setRenderTarget(null);
+    renderer.render(postScene, postCamera);
+  }
+
+  return { setSize, render };
 }
 
 function startFallback2D() {
@@ -365,10 +581,13 @@ async function startThree() {
   const jumpSpeed = 10.2;
   let grounded = false;
 
+  let postPipeline = null;
+
   function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    if (postPipeline) postPipeline.setSize(window.innerWidth, window.innerHeight);
   }
   window.addEventListener("resize", onResize);
 
@@ -378,7 +597,7 @@ async function startThree() {
   let netState = "connecting";
 
   function updateBadge() {
-    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | HQ Lighting | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | Custom SSR+Bloom | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function paintAtWorld(x, z, mode) {
@@ -498,6 +717,7 @@ async function startThree() {
 
   updateBadge();
   initRealtime();
+  postPipeline = createPostPipeline(renderer, camera, window.innerWidth, window.innerHeight);
 
   const clock = new THREE.Clock();
   let netTick = 0;
@@ -668,7 +888,7 @@ async function startThree() {
       publishHello();
     }
 
-    renderer.render(scene, camera);
+    postPipeline.render(scene, camera);
     requestAnimationFrame(animate);
   }
 
