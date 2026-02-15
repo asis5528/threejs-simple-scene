@@ -1,7 +1,6 @@
 ﻿import * as THREE from "https://unpkg.com/three@0.162.0/build/three.module.js?module";
 import { EffectComposer } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/EffectComposer.js?module";
 import { RenderPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/RenderPass.js?module";
-import { SSRPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSRPass.js?module";
 import { UnrealBloomPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/UnrealBloomPass.js?module";
 
 
@@ -38,7 +37,7 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix4";
+const BUILD_VERSION = "2026.02.15-hotfix5";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
@@ -374,7 +373,6 @@ async function startThree() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     if (composer) composer.setSize(window.innerWidth, window.innerHeight);
-    if (ssrPass) ssrPass.setSize(window.innerWidth, window.innerHeight);
     if (bloomPass) bloomPass.setSize(window.innerWidth, window.innerHeight);
   }
   window.addEventListener("resize", onResize);
@@ -384,11 +382,10 @@ async function startThree() {
   const channel = `${APP_ID}-${roomId}`;
   let netState = "connecting";
   let composer = null;
-  let ssrPass = null;
   let bloomPass = null;
 
   function updateBadge() {
-    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | SSR+Bloom | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | HQ Lighting+Bloom | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function paintAtWorld(x, z, mode) {
@@ -512,21 +509,6 @@ async function startThree() {
   composer = new EffectComposer(renderer);
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
-
-  ssrPass = new SSRPass({
-    renderer,
-    scene,
-    camera,
-    width: window.innerWidth,
-    height: window.innerHeight,
-    selects: [floor, ...platforms.map((p) => p.mesh), ball],
-  });
-  ssrPass.maxDistance = 15;
-  ssrPass.thickness = 0.018;
-  ssrPass.opacity = 0.38;
-  ssrPass.distanceAttenuation = true;
-  ssrPass.fresnel = true;
-  composer.addPass(ssrPass);
 
   bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.8, 0.85);
   composer.addPass(bloomPass);
