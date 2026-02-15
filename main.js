@@ -274,9 +274,19 @@ async function startThree() {
   scene.add(sun);
 
   const planeHalf = 7;
+  const paintCanvas = document.createElement("canvas");
+  const paintCtx = paintCanvas.getContext("2d");
+  paintCanvas.width = 1024;
+  paintCanvas.height = 1024;
+  paintCtx.fillStyle = "#ffffff";
+  paintCtx.fillRect(0, 0, paintCanvas.width, paintCanvas.height);
+  const paintTexture = new THREE.CanvasTexture(paintCanvas);
+  paintTexture.needsUpdate = true;
+  paintTexture.colorSpace = THREE.SRGBColorSpace;
+
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(planeHalf * 2, planeHalf * 2),
-    new THREE.MeshStandardMaterial({ color: 0x1f2d45, roughness: 0.9, metalness: 0.02 })
+    new THREE.MeshStandardMaterial({ map: paintTexture, roughness: 0.9, metalness: 0.02 })
   );
   floor.rotation.x = -Math.PI * 0.5;
   floor.receiveShadow = true;
@@ -297,7 +307,14 @@ async function startThree() {
   ball.add(makeNameSprite(playerName));
 
   const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false };
-  window.addEventListener("keydown", (e) => { if (e.code in keys) keys[e.code] = true; });
+  let paintMode = "draw";
+  window.addEventListener("keydown", (e) => {
+    if (e.code in keys) keys[e.code] = true;
+    if (e.code === "KeyP" && !e.repeat) {
+      paintMode = paintMode === "draw" ? "erase" : "draw";
+      updateBadge();
+    }
+  });
   window.addEventListener("keyup", (e) => { if (e.code in keys) keys[e.code] = false; });
 
   const velocity = new THREE.Vector3(0, 0, 0);
@@ -319,11 +336,26 @@ async function startThree() {
 
   const remotes = new Map();
   let sendState = null;
+  let sendPaint = null;
   let room = null;
   let netState = "connecting";
 
   function updateBadge() {
-    setBadge(`WASD Ball Physics | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`WASD Ball Physics | ${playerName} (${sessionId}) | ${paintMode.toUpperCase()} (P) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+  }
+
+  function paintAtWorld(x, z, mode) {
+    const u = (x + planeHalf) / (planeHalf * 2);
+    const v = 1 - (z + planeHalf) / (planeHalf * 2);
+    if (u < 0 || u > 1 || v < 0 || v > 1) return;
+
+    const px = u * paintCanvas.width;
+    const py = v * paintCanvas.height;
+    paintCtx.fillStyle = mode === "erase" ? "#ffffff" : "#d91f2e";
+    paintCtx.beginPath();
+    paintCtx.arc(px, py, 14, 0, Math.PI * 2);
+    paintCtx.fill();
+    paintTexture.needsUpdate = true;
   }
 
   function createRemoteBall(peerId, remoteId, remoteName) {
@@ -362,7 +394,9 @@ async function startThree() {
       room = joinRoom({ appId: "asis5528-ball-physics-v2" }, roomId);
 
       const [send, get] = room.makeAction("state");
+      const [sendPaintAction, getPaintAction] = room.makeAction("paint");
       sendState = send;
+      sendPaint = sendPaintAction;
 
       room.onPeerJoin((peerId) => {
         if (sendState) {
@@ -415,6 +449,11 @@ async function startThree() {
         remote.lastSeen = performance.now();
       });
 
+      getPaintAction((payload) => {
+        if (!payload) return;
+        paintAtWorld(payload.x || 0, payload.z || 0, payload.m === "erase" ? "erase" : "draw");
+      });
+
       netState = "online";
       updateBadge();
 
@@ -433,6 +472,7 @@ async function startThree() {
 
   const clock = new THREE.Clock();
   let netTick = 0;
+  let paintTick = 0;
 
   function animate() {
     const dt = Math.min(clock.getDelta(), 0.033);
@@ -514,6 +554,13 @@ async function startThree() {
     const targetCam = new THREE.Vector3(ball.position.x, 8, ball.position.z + 11);
     camera.position.lerp(targetCam, 1 - Math.exp(-6 * dt));
     camera.lookAt(ball.position.x, radius * 0.7, ball.position.z);
+
+    paintAtWorld(ball.position.x, ball.position.z, paintMode);
+    paintTick += dt;
+    if (sendPaint && paintTick > 1 / 20) {
+      paintTick = 0;
+      sendPaint({ x: ball.position.x, z: ball.position.z, m: paintMode });
+    }
 
     netTick += dt;
     if (sendState && netTick > 1 / 30) {
