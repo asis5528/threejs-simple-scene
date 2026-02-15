@@ -423,7 +423,8 @@ async function startThree() {
 
   async function initRealtime() {
     try {
-      const { default: PubNub } = await import("https://cdn.jsdelivr.net/npm/pubnub@9.4.1/+esm");
+      const PubNub = window.PubNub;
+      if (!PubNub) throw new Error("PubNub SDK missing");
       pubnub = new PubNub({
         publishKey: PUBNUB_PUBLISH_KEY,
         subscribeKey: PUBNUB_SUBSCRIBE_KEY,
