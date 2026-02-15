@@ -34,7 +34,7 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix11";
+const BUILD_VERSION = "2026.02.15-hotfix12";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
@@ -326,26 +326,48 @@ function createPostPipeline(renderer, camera, width, height) {
       }
 
       void main() {
+        vec3 base = texture2D(tScene, vUv).rgb;
+        vec3 bloom = texture2D(tBloom, vUv).rgb * bloomStrength;
         float depth = texture2D(tDepth, vUv).r;
 
-        vec2 du = vec2(1.0 / resolution.x, 0.0);
-        vec2 dv = vec2(0.0, 1.0 / resolution.y);
-        vec3 vp = getViewPos(vUv, depth);
-        vec3 vx = getViewPos(vUv + du, texture2D(tDepth, vUv + du).r) - vp;
-        vec3 vy = getViewPos(vUv + dv, texture2D(tDepth, vUv + dv).r) - vp;
-        vec3 n = normalize(cross(vx, vy));
+        vec3 refl = vec3(0.0);
+        if (depth < 0.999) {
+          vec2 du = vec2(1.0 / resolution.x, 0.0);
+          vec2 dv = vec2(0.0, 1.0 / resolution.y);
+          vec3 vp = getViewPos(vUv, depth);
+          vec3 vx = getViewPos(vUv + du, texture2D(tDepth, vUv + du).r) - vp;
+          vec3 vy = getViewPos(vUv + dv, texture2D(tDepth, vUv + dv).r) - vp;
+          vec3 n = normalize(cross(vx, vy));
+          vec3 v = normalize(vp);
+          vec3 r = normalize(reflect(v, n));
 
-        if (vUv.x < (1.0 / 3.0)) {
-          float d = clamp(depth, 0.0, 1.0);
-          float vis = pow(1.0 - d, 2.2);
-          gl_FragColor = vec4(vec3(vis), 1.0);
-        } else if (vUv.x < (2.0 / 3.0)) {
-          vec3 sceneCol = texture2D(tScene, vUv).rgb;
-          gl_FragColor = vec4(sceneCol, 1.0);
-        } else {
-          vec3 normalVis = n * 0.5 + 0.5;
-          gl_FragColor = vec4(normalVis, 1.0);
+          vec4 world = viewMatrixInv * vec4(vp, 1.0);
+          float floorMask = smoothstep(0.7, 0.0, abs(world.y));
+
+          vec3 ray = vp;
+          vec3 hitColor = vec3(0.0);
+          float hit = 0.0;
+          for (int i = 0; i < 32; i++) {
+            if (float(i) >= maxSteps) break;
+            ray += r * stride;
+            vec2 uvp = projectUv(ray);
+            if (uvp.x < 0.0 || uvp.x > 1.0 || uvp.y < 0.0 || uvp.y > 1.0) break;
+            float d = texture2D(tDepth, uvp).r;
+            if (d >= 0.999) continue;
+            vec3 sv = getViewPos(uvp, d);
+            if (abs(sv.z - ray.z) < 0.24) {
+              hitColor = texture2D(tScene, uvp).rgb;
+              hit = 1.0;
+              break;
+            }
+          }
+
+          float grazing = pow(1.0 - clamp(abs(dot(n, -v)), 0.0, 1.0), 2.0);
+          refl = hitColor * hit * floorMask * grazing * ssrStrength;
         }
+
+        vec3 color = base + bloom + refl;
+        gl_FragColor = vec4(color, 1.0);
       }
     `,
   });
@@ -578,7 +600,7 @@ async function startThree() {
   let netState = "connecting";
 
   function updateBadge() {
-    setBadge(`Build ${BUILD_VERSION} | Depth | Scene | Normals | ${paintMode.toUpperCase()} (P) | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | Custom SSR+Bloom | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function paintAtWorld(x, z, mode) {
