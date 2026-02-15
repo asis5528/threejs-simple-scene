@@ -34,7 +34,7 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix15";
+const BUILD_VERSION = "2026.02.15-hotfix16";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
@@ -43,7 +43,7 @@ function ensureUv2(geometry) {
   geometry.setAttribute("uv2", new THREE.BufferAttribute(geometry.attributes.uv.array, 2));
 }
 
-function makeNoiseTexture(size = 256, contrast = 36) {
+function makeNoiseTexture(size = 256, contrast = 18) {
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
@@ -313,10 +313,12 @@ function createPostPipeline(renderer, camera, width, height) {
       viewMatrixInv: { value: new THREE.Matrix4() },
       resolution: { value: new THREE.Vector2(width, height) },
       bloomStrength: { value: 0.38 },
-      ssrStrength: { value: 0.32 },
-      aoStrength: { value: 0.55 },
-      maxSteps: { value: 24.0 },
-      stride: { value: 0.18 },
+      ssrStrength: { value: 0.44 },
+      aoStrength: { value: 0.22 },
+      aoRadius: { value: 1.35 },
+      aoBias: { value: 0.018 },
+      maxSteps: { value: 30.0 },
+      stride: { value: 0.16 },
     },
     vertexShader: `
       varying vec2 vUv;
@@ -337,6 +339,8 @@ function createPostPipeline(renderer, camera, width, height) {
       uniform float bloomStrength;
       uniform float ssrStrength;
       uniform float aoStrength;
+      uniform float aoRadius;
+      uniform float aoBias;
       uniform float maxSteps;
       uniform float stride;
 
@@ -351,6 +355,38 @@ function createPostPipeline(renderer, camera, width, height) {
         vec4 clip = projectionMatrixCam * vec4(viewPos, 1.0);
         vec2 ndc = clip.xy / max(clip.w, 0.0001);
         return ndc * 0.5 + 0.5;
+      }
+
+      float computeSSAO(vec2 uv, vec3 vp, vec3 n, float depthCenter) {
+        vec2 texel = vec2(1.0 / resolution.x, 1.0 / resolution.y);
+        vec2 dirs[8];
+        dirs[0] = vec2(1.0, 0.0);
+        dirs[1] = vec2(-1.0, 0.0);
+        dirs[2] = vec2(0.0, 1.0);
+        dirs[3] = vec2(0.0, -1.0);
+        dirs[4] = normalize(vec2(1.0, 1.0));
+        dirs[5] = normalize(vec2(-1.0, 1.0));
+        dirs[6] = normalize(vec2(1.0, -1.0));
+        dirs[7] = normalize(vec2(-1.0, -1.0));
+
+        float occ = 0.0;
+        float count = 0.0;
+        for (int i = 0; i < 8; i++) {
+          vec2 suv = uv + dirs[i] * texel * aoRadius * 3.0;
+          if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;
+          float sd = texture2D(tDepth, suv).r;
+          if (sd >= 0.999) continue;
+          vec3 svp = getViewPos(suv, sd);
+          vec3 dir = normalize(svp - vp);
+          float nd = max(dot(n, dir), 0.0);
+          float dz = abs(svp.z - vp.z);
+          float range = smoothstep(0.8, 0.0, dz);
+          float blocked = (sd <= depthCenter - aoBias) ? 1.0 : 0.0;
+          occ += blocked * nd * range;
+          count += 1.0;
+        }
+        if (count < 0.5) return 0.0;
+        return clamp(occ / count, 0.0, 1.0);
       }
 
       void main() {
@@ -369,15 +405,10 @@ function createPostPipeline(renderer, camera, width, height) {
           vec3 n = normalize(cross(vx, vy));
           vec3 v = normalize(vp);
           vec3 r = normalize(reflect(v, n));
-
-          float d1 = texture2D(tDepth, vUv + du * 2.0).r;
-          float d2 = texture2D(tDepth, vUv - du * 2.0).r;
-          float d3 = texture2D(tDepth, vUv + dv * 2.0).r;
-          float d4 = texture2D(tDepth, vUv - dv * 2.0).r;
-          ao = clamp((abs(depth - d1) + abs(depth - d2) + abs(depth - d3) + abs(depth - d4)) * 3.2, 0.0, 1.0);
+          ao = computeSSAO(vUv, vp, n, depth);
 
           vec4 world = viewMatrixInv * vec4(vp, 1.0);
-          float floorMask = smoothstep(0.7, 0.0, abs(world.y));
+          float floorMask = smoothstep(0.28, 0.0, abs(world.y));
 
           vec3 ray = vp;
           vec3 hitColor = vec3(0.0);
@@ -592,11 +623,11 @@ async function startThree() {
   aoTexture.needsUpdate = true;
   aoTexture.wrapS = THREE.RepeatWrapping;
   aoTexture.wrapT = THREE.RepeatWrapping;
-  aoTexture.repeat.set(10, 10);
-  const roughnessNoise = makeNoiseTexture(256, 42);
-  roughnessNoise.repeat.set(12, 12);
-  const normalNoise = makeNoiseTexture(256, 22);
-  normalNoise.repeat.set(12, 12);
+  aoTexture.repeat.set(2.5, 2.5);
+  const roughnessNoise = makeNoiseTexture(512, 12);
+  roughnessNoise.repeat.set(2.0, 2.0);
+  const normalNoise = makeNoiseTexture(512, 8);
+  normalNoise.repeat.set(2.0, 2.0);
 
   const floorGeo = new THREE.PlaneGeometry(planeHalf * 2, planeHalf * 2);
   ensureUv2(floorGeo);
@@ -607,13 +638,13 @@ async function startThree() {
       aoMap: aoTexture,
       roughnessMap: roughnessNoise,
       normalMap: normalNoise,
-      normalScale: new THREE.Vector2(0.16, 0.16),
-      aoMapIntensity: 0.68,
-      roughness: 0.58,
+      normalScale: new THREE.Vector2(0.05, 0.05),
+      aoMapIntensity: 0.38,
+      roughness: 0.54,
       metalness: 0.03,
-      clearcoat: 0.18,
-      clearcoatRoughness: 0.28,
-      envMapIntensity: 1.25,
+      clearcoat: 0.24,
+      clearcoatRoughness: 0.2,
+      envMapIntensity: 1.38,
     })
   );
   floor.rotation.x = -Math.PI * 0.5;
@@ -641,13 +672,13 @@ async function startThree() {
         aoMap: aoTexture,
         roughnessMap: roughnessNoise,
         normalMap: normalNoise,
-        normalScale: new THREE.Vector2(0.09, 0.09),
-        aoMapIntensity: 0.52,
-        roughness: 0.46,
+        normalScale: new THREE.Vector2(0.04, 0.04),
+        aoMapIntensity: 0.26,
+        roughness: 0.38,
         metalness: 0.08,
-        clearcoat: 0.12,
-        clearcoatRoughness: 0.38,
-        envMapIntensity: 1.45,
+        clearcoat: 0.2,
+        clearcoatRoughness: 0.28,
+        envMapIntensity: 1.62,
       })
     );
     mesh.position.set(p.x, p.y, p.z);
@@ -666,11 +697,11 @@ async function startThree() {
       color: 0x6db3ff,
       aoMap: aoTexture,
       aoMapIntensity: 0.4,
-      roughness: 0.22,
-      metalness: 0.18,
-      clearcoat: 0.5,
-      clearcoatRoughness: 0.12,
-      envMapIntensity: 1.8,
+      roughness: 0.14,
+      metalness: 0.22,
+      clearcoat: 0.62,
+      clearcoatRoughness: 0.08,
+      envMapIntensity: 2.1,
     })
   );
   ball.position.set(0, radius, 0);
@@ -744,11 +775,11 @@ async function startThree() {
         aoMap: aoTexture,
         roughnessMap: roughnessNoise,
         aoMapIntensity: 0.38,
-        roughness: 0.24,
-        metalness: 0.14,
-        clearcoat: 0.34,
-        clearcoatRoughness: 0.2,
-        envMapIntensity: 1.55,
+        roughness: 0.18,
+        metalness: 0.17,
+        clearcoat: 0.44,
+        clearcoatRoughness: 0.14,
+        envMapIntensity: 1.75,
       })
     );
     remoteMesh.castShadow = true;
