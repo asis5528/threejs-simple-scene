@@ -32,6 +32,8 @@ function sanitizeRoom(room) {
   return cleaned || "lobby";
 }
 
+const APP_ID = "asis5528-ball-physics";
+
 function makeNameSprite(text) {
   const c = document.createElement("canvas");
   const ctx = c.getContext("2d");
@@ -346,7 +348,7 @@ async function startThree() {
 
   function paintAtWorld(x, z, mode) {
     const u = (x + planeHalf) / (planeHalf * 2);
-    const v = 1 - (z + planeHalf) / (planeHalf * 2);
+    const v = (z + planeHalf) / (planeHalf * 2);
     if (u < 0 || u > 1 || v < 0 || v > 1) return;
 
     const px = u * paintCanvas.width;
@@ -391,7 +393,7 @@ async function startThree() {
   async function initRealtime() {
     try {
       const { joinRoom } = await import("https://cdn.jsdelivr.net/npm/trystero/+esm");
-      room = joinRoom({ appId: "asis5528-ball-physics-v2" }, roomId);
+      room = joinRoom({ appId: APP_ID, relayRedundancy: 5 }, roomId);
 
       const [send, get] = room.makeAction("state");
       const [sendPaintAction, getPaintAction] = room.makeAction("paint");
@@ -399,23 +401,7 @@ async function startThree() {
       sendPaint = sendPaintAction;
 
       room.onPeerJoin((peerId) => {
-        if (sendState) {
-          sendState({
-            id: sessionId,
-            n: playerName,
-            px: ball.position.x,
-            py: ball.position.y,
-            pz: ball.position.z,
-            vx: velocity.x,
-            vy: velocity.y,
-            vz: velocity.z,
-            qx: ball.quaternion.x,
-            qy: ball.quaternion.y,
-            qz: ball.quaternion.z,
-            qw: ball.quaternion.w,
-            ts: Date.now(),
-          }, peerId);
-        }
+        if (sendState) broadcastState(peerId);
       });
 
       room.onPeerLeave((peerId) => {
@@ -473,6 +459,26 @@ async function startThree() {
   const clock = new THREE.Clock();
   let netTick = 0;
   let paintTick = 0;
+  function broadcastState(targetPeerId) {
+    if (!sendState) return;
+    const payload = {
+      id: sessionId,
+      n: playerName,
+      px: ball.position.x,
+      py: ball.position.y,
+      pz: ball.position.z,
+      vx: velocity.x,
+      vy: velocity.y,
+      vz: velocity.z,
+      qx: ball.quaternion.x,
+      qy: ball.quaternion.y,
+      qz: ball.quaternion.z,
+      qw: ball.quaternion.w,
+      ts: Date.now(),
+    };
+    if (targetPeerId) sendState(payload, targetPeerId);
+    else sendState(payload);
+  }
 
   function animate() {
     const dt = Math.min(clock.getDelta(), 0.033);
@@ -539,7 +545,7 @@ async function startThree() {
       remote.mesh.position.lerp(predicted, alpha);
       remote.mesh.quaternion.slerp(remote.netQuat, 1 - Math.exp(-14 * dt));
 
-      if (performance.now() - remote.lastSeen > 12000) {
+      if (performance.now() - remote.lastSeen > 30000) {
         scene.remove(remote.mesh);
         remote.mesh.geometry.dispose();
         remote.mesh.material.dispose();
@@ -563,23 +569,9 @@ async function startThree() {
     }
 
     netTick += dt;
-    if (sendState && netTick > 1 / 30) {
+    if (sendState && netTick > 1 / 20) {
       netTick = 0;
-      sendState({
-        id: sessionId,
-        n: playerName,
-        px: ball.position.x,
-        py: ball.position.y,
-        pz: ball.position.z,
-        vx: velocity.x,
-        vy: velocity.y,
-        vz: velocity.z,
-        qx: ball.quaternion.x,
-        qy: ball.quaternion.y,
-        qz: ball.quaternion.z,
-        qw: ball.quaternion.w,
-        ts: Date.now(),
-      });
+      broadcastState();
     }
 
     renderer.render(scene, camera);
