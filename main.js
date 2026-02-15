@@ -34,7 +34,7 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix7";
+const BUILD_VERSION = "2026.02.15-hotfix8";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
@@ -303,6 +303,7 @@ function createPostPipeline(renderer, camera, width, height) {
       uniform sampler2D tScene;
       uniform sampler2D tBloom;
       uniform sampler2D tDepth;
+      uniform vec2 resolution;
       uniform mat4 projectionMatrixInv;
       uniform mat4 projectionMatrixCam;
       uniform mat4 viewMatrixInv;
