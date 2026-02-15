@@ -22,6 +22,20 @@ function Require-Command {
   }
 }
 
+function Ensure-SafeGitDirectory {
+  param([string]$Path)
+  try {
+    git -C $Path status | Out-Null
+  } catch {
+    $msg = $_.Exception.Message
+    if ($msg -match "dubious ownership") {
+      git config --global --add safe.directory $Path | Out-Null
+    } else {
+      throw
+    }
+  }
+}
+
 function Invoke-GitHubApi {
   param(
     [Parameter(Mandatory = $true)][ValidateSet("GET", "POST", "PUT", "PATCH")][string]$Method,
@@ -58,6 +72,7 @@ if (-not $Token) {
 }
 
 Require-Command git
+Ensure-SafeGitDirectory -Path (Get-Location).Path
 
 $requiredFiles = @("index.html", "main.js", "styles.css")
 foreach ($f in $requiredFiles) {
@@ -78,7 +93,13 @@ if (-not (Test-Path ".git")) {
 
 git checkout -B main | Out-Null
 
+$prevErr = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 git add index.html main.js styles.css README.md deploy-github-pages.ps1 2>$null
+$ErrorActionPreference = $prevErr
+if ($LASTEXITCODE -ne 0) {
+  throw "git add failed with exit code $LASTEXITCODE"
+}
 $pending = git status --porcelain
 if ($pending) {
   git commit -m "Initial Three.js scene" | Out-Null
