@@ -57,6 +57,15 @@ function Invoke-GitHubApi {
   return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers -ContentType "application/json" -Body $json
 }
 
+function Get-StatusCodeFromException {
+  param($Ex)
+  try {
+    return [int]$Ex.Exception.Response.StatusCode
+  } catch {
+    return -1
+  }
+}
+
 if (-not $Token) {
   $secureToken = Read-Host "Enter GitHub token (repo + pages scope)" -AsSecureString
   $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
@@ -118,11 +127,35 @@ try {
 }
 
 if (-not $repoExists) {
-  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/user/repos" -Body @{
-    name = $RepoName
-    "private" = $false
-    description = "Simple Three.js scene"
-  } | Out-Null
+  try {
+    Invoke-GitHubApi -Method POST -Uri "https://api.github.com/user/repos" -Body @{
+      name = $RepoName
+      "private" = $false
+      description = "Simple Three.js scene"
+    } | Out-Null
+  } catch {
+    $code = Get-StatusCodeFromException -Ex $_
+    if ($code -eq 403 -or $code -eq 404) {
+      throw @"
+GitHub token cannot create repositories via API (HTTP $code).
+Use a token with sufficient repository permissions, then rerun.
+
+Recommended:
+- Classic PAT scope: repo
+or
+- Fine-grained token permissions:
+  - Repository access: All repositories (or include $RepoName)
+  - Contents: Read and write
+  - Administration: Read and write
+  - Pages: Read and write
+
+Fallback:
+1) Create https://github.com/$GitHubUser/$RepoName manually.
+2) Rerun this script; it will skip repo creation and continue.
+"@
+    }
+    throw
+  }
 }
 
 Write-Host "[3/7] Configuring remote..."
