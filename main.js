@@ -1,9 +1,8 @@
-﻿import * as THREE from "./vendor/three.module.js";
+﻿import * as THREE from "https://unpkg.com/three@0.162.0/build/three.module.js?module";
 import { EffectComposer } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/EffectComposer.js?module";
 import { RenderPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/RenderPass.js?module";
 import { SSRPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSRPass.js?module";
 import { UnrealBloomPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/UnrealBloomPass.js?module";
-import { RoomEnvironment } from "https://unpkg.com/three@0.162.0/examples/jsm/environments/RoomEnvironment.js?module";
 
 
 const canvas = document.getElementById("app");
@@ -294,8 +293,6 @@ async function startThree() {
   const bounceLight = new THREE.HemisphereLight(0x8fc8ff, 0x152035, 0.55);
   scene.add(bounceLight);
 
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.03).texture;
 
   const planeHalf = 7;
   const paintCanvas = document.createElement("canvas");
