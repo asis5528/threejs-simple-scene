@@ -33,6 +33,8 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
+const PUBNUB_PUBLISH_KEY = "demo";
+const PUBNUB_SUBSCRIBE_KEY = "demo";
 
 function makeNameSprite(text) {
   const c = document.createElement("canvas");
@@ -338,10 +340,8 @@ async function startThree() {
   window.addEventListener("resize", onResize);
 
   const remotes = new Map();
-  let sendState = null;
-  let sendPaint = null;
-  let sendHello = null;
-  let room = null;
+  let pubnub = null;
+  const channel = `${APP_ID}-${roomId}`;
   let netState = "connecting";
 
   function updateBadge() {
@@ -392,69 +392,68 @@ async function startThree() {
     return remote;
   }
 
+  function clearRemote(remote) {
+    scene.remove(remote.mesh);
+    scene.remove(remote.label);
+    remote.mesh.geometry.dispose();
+    remote.mesh.material.dispose();
+    if (remote.label && remote.label.material && remote.label.material.map) remote.label.material.map.dispose();
+    if (remote.label && remote.label.material) remote.label.material.dispose();
+  }
+
+  function handleStatePayload(payload) {
+    const peerId = payload.sid || payload.id;
+    if (!payload || !peerId || peerId === sessionId) return;
+
+    const remoteName = sanitizeName(payload.n || `Player-${peerId}`, `Player-${peerId}`);
+    let remote = remotes.get(peerId);
+    if (!remote) remote = createRemoteBall(peerId, peerId, remoteName);
+
+    if (remote.name !== remoteName) {
+      remote.name = remoteName;
+      setNameSpriteText(remote.label, remoteName);
+    }
+
+    if (typeof payload.px === "number") remote.netPos.set(payload.px, payload.py || radius, payload.pz || 0);
+    if (typeof payload.vx === "number") remote.netVel.set(payload.vx, payload.vy || 0, payload.vz || 0);
+    if (typeof payload.qx === "number") remote.netQuat.set(payload.qx, payload.qy || 0, payload.qz || 0, payload.qw || 1);
+    remote.netTs = payload.ts || Date.now();
+    remote.lastSeen = performance.now();
+  }
+
   async function initRealtime() {
     try {
-      const { joinRoom } = await import("https://cdn.jsdelivr.net/npm/trystero/+esm");
-      room = joinRoom({ appId: APP_ID, relayRedundancy: 5 }, roomId);
-
-      const [send, get] = room.makeAction("state");
-      const [sendPaintAction, getPaintAction] = room.makeAction("paint");
-      const [sendHelloAction, getHelloAction] = room.makeAction("hello");
-      sendState = send;
-      sendPaint = sendPaintAction;
-      sendHello = sendHelloAction;
-
-      room.onPeerJoin((peerId) => {
-        if (sendState) broadcastState(peerId);
-        if (sendHello) sendHello({ t: Date.now() }, peerId);
+      const { default: PubNub } = await import("https://cdn.jsdelivr.net/npm/pubnub@9.4.1/+esm");
+      pubnub = new PubNub({
+        publishKey: PUBNUB_PUBLISH_KEY,
+        subscribeKey: PUBNUB_SUBSCRIBE_KEY,
+        uuid: sessionId,
       });
 
-      room.onPeerLeave((peerId) => {
-        const remote = remotes.get(peerId);
-        if (!remote) return;
-        scene.remove(remote.mesh);
-        scene.remove(remote.label);
-        remote.mesh.geometry.dispose();
-        remote.mesh.material.dispose();
-        if (remote.label && remote.label.material && remote.label.material.map) remote.label.material.map.dispose();
-        if (remote.label && remote.label.material) remote.label.material.dispose();
-        remotes.delete(peerId);
-        updateBadge();
+      pubnub.addListener({
+        message: (event) => {
+          const payload = event.message;
+          if (!payload || payload.sid === sessionId) return;
+
+          if (payload.t === "state" || payload.t === "hello") {
+            handleStatePayload(payload);
+          } else if (payload.t === "paint") {
+            paintAtWorld(payload.x || 0, payload.z || 0, payload.m === "erase" ? "erase" : "draw");
+          }
+        },
       });
 
-      get((payload, peerId) => {
-        if (!payload || !payload.id || payload.id === sessionId) return;
+      pubnub.subscribe({ channels: [channel] });
 
-        const remoteName = sanitizeName(payload.n || `Player-${payload.id}`, `Player-${payload.id}`);
-        let remote = remotes.get(peerId);
-        if (!remote) remote = createRemoteBall(peerId, payload.id, remoteName);
-
-        if (remote.name !== remoteName) {
-          remote.name = remoteName;
-          setNameSpriteText(remote.label, remoteName);
-        }
-
-        remote.netPos.set(payload.px || 0, payload.py || radius, payload.pz || 0);
-        remote.netVel.set(payload.vx || 0, payload.vy || 0, payload.vz || 0);
-        remote.netQuat.set(payload.qx || 0, payload.qy || 0, payload.qz || 0, payload.qw || 1);
-        remote.netTs = payload.ts || Date.now();
-        remote.lastSeen = performance.now();
-      });
-
-      getPaintAction((payload) => {
-        if (!payload) return;
-        paintAtWorld(payload.x || 0, payload.z || 0, payload.m === "erase" ? "erase" : "draw");
-      });
-
-      getHelloAction((_, peerId) => {
-        broadcastState(peerId);
-      });
-
-      netState = "online";
+      netState = "online-relay";
       updateBadge();
+      publishHello();
+      broadcastState();
 
       window.addEventListener("beforeunload", () => {
-        if (room && room.leave) room.leave();
+        if (!pubnub) return;
+        pubnub.unsubscribeAll();
+        pubnub.stop();
       });
     } catch (err) {
       console.warn("Realtime disabled:", err);
@@ -470,9 +469,15 @@ async function startThree() {
   let netTick = 0;
   let paintTick = 0;
   let helloTick = 0;
-  function broadcastState(targetPeerId) {
-    if (!sendState) return;
+  function publishMessage(payload) {
+    if (!pubnub) return;
+    pubnub.publish({ channel, message: payload }).catch(() => {});
+  }
+
+  function broadcastState() {
     const payload = {
+      t: "state",
+      sid: sessionId,
       id: sessionId,
       n: playerName,
       px: ball.position.x,
@@ -487,8 +492,26 @@ async function startThree() {
       qw: ball.quaternion.w,
       ts: Date.now(),
     };
-    if (targetPeerId) sendState(payload, targetPeerId);
-    else sendState(payload);
+    publishMessage(payload);
+  }
+
+  function publishHello() {
+    publishMessage({
+      t: "hello",
+      sid: sessionId,
+      n: playerName,
+      px: ball.position.x,
+      py: ball.position.y,
+      pz: ball.position.z,
+      vx: velocity.x,
+      vy: velocity.y,
+      vz: velocity.z,
+      qx: ball.quaternion.x,
+      qy: ball.quaternion.y,
+      qz: ball.quaternion.z,
+      qw: ball.quaternion.w,
+      ts: Date.now(),
+    });
   }
 
   function animate() {
@@ -559,12 +582,7 @@ async function startThree() {
       remote.label.quaternion.copy(camera.quaternion);
 
       if (performance.now() - remote.lastSeen > 30000) {
-        scene.remove(remote.mesh);
-        scene.remove(remote.label);
-        remote.mesh.geometry.dispose();
-        remote.mesh.material.dispose();
-        if (remote.label && remote.label.material && remote.label.material.map) remote.label.material.map.dispose();
-        if (remote.label && remote.label.material) remote.label.material.dispose();
+        clearRemote(remote);
         stalePeers.push(peerId);
       }
     }
@@ -579,21 +597,21 @@ async function startThree() {
 
     paintAtWorld(ball.position.x, ball.position.z, paintMode);
     paintTick += dt;
-    if (sendPaint && paintTick > 1 / 20) {
+    if (pubnub && paintTick > 1 / 12) {
       paintTick = 0;
-      sendPaint({ x: ball.position.x, z: ball.position.z, m: paintMode });
+      publishMessage({ t: "paint", sid: sessionId, x: ball.position.x, z: ball.position.z, m: paintMode });
     }
 
     netTick += dt;
-    if (sendState && netTick > 1 / 20) {
+    if (pubnub && netTick > 1 / 12) {
       netTick = 0;
       broadcastState();
     }
 
     helloTick += dt;
-    if (sendHello && helloTick > 1.0) {
+    if (pubnub && helloTick > 2.0) {
       helloTick = 0;
-      sendHello({ t: Date.now() });
+      publishHello();
     }
 
     renderer.render(scene, camera);
