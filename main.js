@@ -326,15 +326,13 @@ function createPostPipeline(renderer, camera, width, height) {
       }
 
       void main() {
-        vec2 uvSplit = vUv;
-        uvSplit.x = (vUv.x < 0.5) ? (vUv.x * 2.0) : ((vUv.x - 0.5) * 2.0);
-        float depth = texture2D(tDepth, uvSplit).r;
+        float depth = texture2D(tDepth, vUv).r;
 
         vec2 du = vec2(1.0 / resolution.x, 0.0);
         vec2 dv = vec2(0.0, 1.0 / resolution.y);
-        vec3 vp = getViewPos(uvSplit, depth);
-        vec3 vx = getViewPos(uvSplit + du, texture2D(tDepth, uvSplit + du).r) - vp;
-        vec3 vy = getViewPos(uvSplit + dv, texture2D(tDepth, uvSplit + dv).r) - vp;
+        vec3 vp = getViewPos(vUv, depth);
+        vec3 vx = getViewPos(vUv + du, texture2D(tDepth, vUv + du).r) - vp;
+        vec3 vy = getViewPos(vUv + dv, texture2D(tDepth, vUv + dv).r) - vp;
         vec3 n = normalize(cross(vx, vy));
 
         if (vUv.x < 0.5) {
