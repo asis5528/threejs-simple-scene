@@ -1,4 +1,12 @@
 ﻿import * as THREE from "./vendor/three.module.js";
+import { EffectComposer } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/RenderPass.js";
+import { SSRPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSRPass.js";
+import { SSAOPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSAOPass.js";
+import { SAOPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SAOPass.js";
+import { UnrealBloomPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { RoomEnvironment } from "https://unpkg.com/three@0.162.0/examples/jsm/environments/RoomEnvironment.js";
+
 
 const canvas = document.getElementById("app");
 const badge = document.querySelector(".badge");
@@ -263,19 +271,32 @@ async function startThree() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0f1522);
+  scene.fog = new THREE.Fog(0x090d16, 20, 70);
 
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
   camera.position.set(0, 8, 11);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.22));
 
-  const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.45);
   sun.position.set(8, 14, 6);
   sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.normalBias = 0.02;
   scene.add(sun);
+
+  const bounceLight = new THREE.HemisphereLight(0x8fc8ff, 0x152035, 0.55);
+  scene.add(bounceLight);
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.03).texture;
 
   const planeHalf = 7;
   const paintCanvas = document.createElement("canvas");
@@ -300,6 +321,25 @@ async function startThree() {
   grid.position.y = 0.01;
   scene.add(grid);
 
+  const platformDefs = [
+    { x: -3.2, y: 1.1, z: -1.5, sx: 2.4, sy: 0.6, sz: 2.4, c: 0x2a3f63 },
+    { x: 0.0, y: 2.3, z: 1.2, sx: 2.8, sy: 0.6, sz: 2.8, c: 0x314a73 },
+    { x: 3.6, y: 3.6, z: -0.8, sx: 2.2, sy: 0.55, sz: 2.2, c: 0x3d5d8f },
+    { x: -1.0, y: 4.7, z: 3.2, sx: 3.1, sy: 0.5, sz: 2.0, c: 0x486fa8 },
+  ];
+
+  const platforms = platformDefs.map((p) => {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(p.sx, p.sy, p.sz),
+      new THREE.MeshStandardMaterial({ color: p.c, roughness: 0.55, metalness: 0.22, envMapIntensity: 1.1 })
+    );
+    mesh.position.set(p.x, p.y, p.z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    return { mesh, halfX: p.sx * 0.5, halfY: p.sy * 0.5, halfZ: p.sz * 0.5 };
+  });
+
   const radius = 0.45;
   const ball = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 48, 32),
@@ -311,7 +351,7 @@ async function startThree() {
   const localLabel = makeNameSprite(playerName);
   scene.add(localLabel);
 
-  const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false };
+  const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false, Space: false };
   let paintMode = "draw";
   window.addEventListener("keydown", (e) => {
     if (e.code in keys) keys[e.code] = true;
@@ -327,15 +367,21 @@ async function startThree() {
 
   const accel = 18.0;
   const damping = 4.8;
-  const gravity = -24.0;
-  const bounce = 0.45;
+  const gravity = -30.0;
   const wallBounce = 0.6;
   const maxSpeed = 7.5;
+  const jumpSpeed = 10.2;
+  let grounded = false;
 
   function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    if (composer) composer.setSize(window.innerWidth, window.innerHeight);
+    if (ssrPass) ssrPass.setSize(window.innerWidth, window.innerHeight);
+    if (ssaoPass) ssaoPass.setSize(window.innerWidth, window.innerHeight);
+    if (ssgiApproxPass) ssgiApproxPass.setSize(window.innerWidth, window.innerHeight);
+    if (bloomPass) bloomPass.setSize(window.innerWidth, window.innerHeight);
   }
   window.addEventListener("resize", onResize);
 
@@ -343,9 +389,14 @@ async function startThree() {
   let pubnub = null;
   const channel = `${APP_ID}-${roomId}`;
   let netState = "connecting";
+  let composer = null;
+  let ssrPass = null;
+  let ssaoPass = null;
+  let ssgiApproxPass = null;
+  let bloomPass = null;
 
   function updateBadge() {
-    setBadge(`WASD Ball Physics | ${playerName} (${sessionId}) | ${paintMode.toUpperCase()} (P) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | SSR+SSAO+SSGI* | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function paintAtWorld(x, z, mode) {
@@ -466,6 +517,41 @@ async function startThree() {
   updateBadge();
   initRealtime();
 
+  composer = new EffectComposer(renderer);
+  const renderPass = new RenderPass(scene, camera);
+  composer.addPass(renderPass);
+
+  ssrPass = new SSRPass({
+    renderer,
+    scene,
+    camera,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    selects: [floor, ...platforms.map((p) => p.mesh), ball],
+  });
+  ssrPass.maxDistance = 15;
+  ssrPass.thickness = 0.018;
+  ssrPass.opacity = 0.38;
+  ssrPass.distanceAttenuation = true;
+  ssrPass.fresnel = true;
+  composer.addPass(ssrPass);
+
+  ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
+  ssaoPass.kernelRadius = 22;
+  ssaoPass.minDistance = 0.003;
+  ssaoPass.maxDistance = 0.18;
+  composer.addPass(ssaoPass);
+
+  ssgiApproxPass = new SAOPass(scene, camera, false, true);
+  ssgiApproxPass.params.saoBias = 0.35;
+  ssgiApproxPass.params.saoIntensity = 0.008;
+  ssgiApproxPass.params.saoScale = 8;
+  ssgiApproxPass.params.saoKernelRadius = 64;
+  composer.addPass(ssgiApproxPass);
+
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.8, 0.85);
+  composer.addPass(bloomPass);
+
   const clock = new THREE.Clock();
   let netTick = 0;
   let paintTick = 0;
@@ -525,6 +611,11 @@ async function startThree() {
     if (keys.KeyD) inputDir.x += 1;
     if (inputDir.lengthSq() > 0) inputDir.normalize();
 
+    if (keys.Space && grounded) {
+      velocity.y = jumpSpeed;
+      grounded = false;
+    }
+
     velocity.x += inputDir.x * accel * dt;
     velocity.z += inputDir.z * accel * dt;
 
@@ -540,12 +631,27 @@ async function startThree() {
     velocity.x *= dampFactor;
     velocity.z *= dampFactor;
     velocity.y += gravity * dt;
-
+    const prevY = ball.position.y;
     ball.position.addScaledVector(velocity, dt);
+    grounded = false;
 
     if (ball.position.y < radius) {
       ball.position.y = radius;
-      velocity.y = Math.abs(velocity.y) > 0.2 ? -velocity.y * bounce : 0;
+      velocity.y = 0;
+      grounded = true;
+    }
+
+    for (const p of platforms) {
+      const top = p.mesh.position.y + p.halfY;
+      const withinX = ball.position.x > p.mesh.position.x - p.halfX - radius && ball.position.x < p.mesh.position.x + p.halfX + radius;
+      const withinZ = ball.position.z > p.mesh.position.z - p.halfZ - radius && ball.position.z < p.mesh.position.z + p.halfZ + radius;
+      const crossedTop = prevY >= top + radius - 0.04 && ball.position.y <= top + radius;
+
+      if (withinX && withinZ && crossedTop && velocity.y <= 0) {
+        ball.position.y = top + radius;
+        velocity.y = 0;
+        grounded = true;
+      }
     }
 
     const limit = planeHalf - radius;
@@ -615,7 +721,7 @@ async function startThree() {
       publishHello();
     }
 
-    renderer.render(scene, camera);
+    composer.render();
     requestAnimationFrame(animate);
   }
 
