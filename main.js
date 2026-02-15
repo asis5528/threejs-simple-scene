@@ -34,7 +34,7 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix13";
+const BUILD_VERSION = "2026.02.15-hotfix14";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
@@ -501,12 +501,26 @@ async function startThree() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
+  renderer.toneMappingExposure = 0.98;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0f1522);
   scene.fog = new THREE.Fog(0x090d16, 20, 70);
+  scene.backgroundBlurriness = 0.25;
+  scene.backgroundIntensity = 0.65;
+
+  const envMap = new THREE.CubeTextureLoader().load([
+    "https://threejs.org/examples/textures/cube/Bridge2/posx.jpg",
+    "https://threejs.org/examples/textures/cube/Bridge2/negx.jpg",
+    "https://threejs.org/examples/textures/cube/Bridge2/posy.jpg",
+    "https://threejs.org/examples/textures/cube/Bridge2/negy.jpg",
+    "https://threejs.org/examples/textures/cube/Bridge2/posz.jpg",
+    "https://threejs.org/examples/textures/cube/Bridge2/negz.jpg",
+  ]);
+  envMap.colorSpace = THREE.SRGBColorSpace;
+  scene.environment = envMap;
+  scene.background = envMap;
 
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
   camera.position.set(0, 8, 11);
@@ -559,6 +573,7 @@ async function startThree() {
       metalness: 0.08,
       clearcoat: 0.12,
       clearcoatRoughness: 0.42,
+      envMapIntensity: 1.15,
     })
   );
   floor.rotation.x = -Math.PI * 0.5;
@@ -589,6 +604,7 @@ async function startThree() {
         metalness: 0.24,
         clearcoat: 0.18,
         clearcoatRoughness: 0.32,
+        envMapIntensity: 1.35,
       })
     );
     mesh.position.set(p.x, p.y, p.z);
@@ -611,6 +627,7 @@ async function startThree() {
       metalness: 0.18,
       clearcoat: 0.5,
       clearcoatRoughness: 0.12,
+      envMapIntensity: 1.55,
     })
   );
   ball.position.set(0, radius, 0);
@@ -657,7 +674,7 @@ async function startThree() {
   let netState = "connecting";
 
   function updateBadge() {
-    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | Custom SSR+Bloom | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | Custom SSR+Bloom+IBL | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function paintAtWorld(x, z, mode) {
@@ -687,6 +704,7 @@ async function startThree() {
         metalness: 0.16,
         clearcoat: 0.38,
         clearcoatRoughness: 0.18,
+        envMapIntensity: 1.45,
       })
     );
     remoteMesh.castShadow = true;
