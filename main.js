@@ -34,13 +34,34 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix14";
+const BUILD_VERSION = "2026.02.15-hotfix15";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
 function ensureUv2(geometry) {
   if (!geometry.attributes.uv || geometry.attributes.uv2) return;
   geometry.setAttribute("uv2", new THREE.BufferAttribute(geometry.attributes.uv.array, 2));
+}
+
+function makeNoiseTexture(size = 256, contrast = 36) {
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d");
+  const img = ctx.createImageData(size, size);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = 128 + (Math.random() * 2 - 1) * contrast;
+    img.data[i + 0] = n;
+    img.data[i + 1] = n;
+    img.data[i + 2] = n;
+    img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 function makeNameSprite(text) {
@@ -500,13 +521,14 @@ async function startThree() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.physicallyCorrectLights = true;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.98;
+  renderer.toneMappingExposure = 1.22;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0f1522);
-  scene.fog = new THREE.Fog(0x090d16, 20, 70);
+  scene.background = new THREE.Color(0xb8cde2);
+  scene.fog = new THREE.Fog(0xb4c7d8, 24, 90);
   scene.backgroundBlurriness = 0.25;
   scene.backgroundIntensity = 0.65;
 
@@ -525,16 +547,24 @@ async function startThree() {
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
   camera.position.set(0, 8, 11);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
 
-  const sun = new THREE.DirectionalLight(0xffffff, 1.45);
-  sun.position.set(8, 14, 6);
+  const sun = new THREE.DirectionalLight(0xfff2dd, 2.3);
+  sun.position.set(11, 18, 7);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.normalBias = 0.02;
+  sun.shadow.camera.left = -18;
+  sun.shadow.camera.right = 18;
+  sun.shadow.camera.top = 18;
+  sun.shadow.camera.bottom = -18;
   scene.add(sun);
 
-  const bounceLight = new THREE.HemisphereLight(0x8fc8ff, 0x152035, 0.55);
+  const fill = new THREE.DirectionalLight(0xdde9ff, 0.9);
+  fill.position.set(-9, 7, -8);
+  scene.add(fill);
+
+  const bounceLight = new THREE.HemisphereLight(0xbfd8ff, 0x54657a, 0.85);
   scene.add(bounceLight);
 
 
@@ -560,6 +590,13 @@ async function startThree() {
   aoCtx.fillRect(0, 0, 256, 256);
   const aoTexture = new THREE.CanvasTexture(aoCanvas);
   aoTexture.needsUpdate = true;
+  aoTexture.wrapS = THREE.RepeatWrapping;
+  aoTexture.wrapT = THREE.RepeatWrapping;
+  aoTexture.repeat.set(10, 10);
+  const roughnessNoise = makeNoiseTexture(256, 42);
+  roughnessNoise.repeat.set(12, 12);
+  const normalNoise = makeNoiseTexture(256, 22);
+  normalNoise.repeat.set(12, 12);
 
   const floorGeo = new THREE.PlaneGeometry(planeHalf * 2, planeHalf * 2);
   ensureUv2(floorGeo);
@@ -568,12 +605,15 @@ async function startThree() {
     new THREE.MeshPhysicalMaterial({
       map: paintTexture,
       aoMap: aoTexture,
-      aoMapIntensity: 0.9,
-      roughness: 0.78,
-      metalness: 0.08,
-      clearcoat: 0.12,
-      clearcoatRoughness: 0.42,
-      envMapIntensity: 1.15,
+      roughnessMap: roughnessNoise,
+      normalMap: normalNoise,
+      normalScale: new THREE.Vector2(0.16, 0.16),
+      aoMapIntensity: 0.68,
+      roughness: 0.58,
+      metalness: 0.03,
+      clearcoat: 0.18,
+      clearcoatRoughness: 0.28,
+      envMapIntensity: 1.25,
     })
   );
   floor.rotation.x = -Math.PI * 0.5;
@@ -585,10 +625,10 @@ async function startThree() {
   scene.add(grid);
 
   const platformDefs = [
-    { x: -3.2, y: 1.1, z: -1.5, sx: 2.4, sy: 0.6, sz: 2.4, c: 0x2a3f63 },
-    { x: 0.0, y: 2.3, z: 1.2, sx: 2.8, sy: 0.6, sz: 2.8, c: 0x314a73 },
-    { x: 3.6, y: 3.6, z: -0.8, sx: 2.2, sy: 0.55, sz: 2.2, c: 0x3d5d8f },
-    { x: -1.0, y: 4.7, z: 3.2, sx: 3.1, sy: 0.5, sz: 2.0, c: 0x486fa8 },
+    { x: -3.2, y: 1.1, z: -1.5, sx: 2.4, sy: 0.6, sz: 2.4, c: 0x8d95a0 },
+    { x: 0.0, y: 2.3, z: 1.2, sx: 2.8, sy: 0.6, sz: 2.8, c: 0x9aa4b0 },
+    { x: 3.6, y: 3.6, z: -0.8, sx: 2.2, sy: 0.55, sz: 2.2, c: 0xa6b0bd },
+    { x: -1.0, y: 4.7, z: 3.2, sx: 3.1, sy: 0.5, sz: 2.0, c: 0xb3beca },
   ];
 
   const platforms = platformDefs.map((p) => {
@@ -599,12 +639,15 @@ async function startThree() {
       new THREE.MeshPhysicalMaterial({
         color: p.c,
         aoMap: aoTexture,
-        aoMapIntensity: 0.85,
-        roughness: 0.42,
-        metalness: 0.24,
-        clearcoat: 0.18,
-        clearcoatRoughness: 0.32,
-        envMapIntensity: 1.35,
+        roughnessMap: roughnessNoise,
+        normalMap: normalNoise,
+        normalScale: new THREE.Vector2(0.09, 0.09),
+        aoMapIntensity: 0.52,
+        roughness: 0.46,
+        metalness: 0.08,
+        clearcoat: 0.12,
+        clearcoatRoughness: 0.38,
+        envMapIntensity: 1.45,
       })
     );
     mesh.position.set(p.x, p.y, p.z);
@@ -622,12 +665,12 @@ async function startThree() {
     new THREE.MeshPhysicalMaterial({
       color: 0x6db3ff,
       aoMap: aoTexture,
-      aoMapIntensity: 0.45,
+      aoMapIntensity: 0.4,
       roughness: 0.22,
       metalness: 0.18,
       clearcoat: 0.5,
       clearcoatRoughness: 0.12,
-      envMapIntensity: 1.55,
+      envMapIntensity: 1.8,
     })
   );
   ball.position.set(0, radius, 0);
@@ -674,7 +717,7 @@ async function startThree() {
   let netState = "connecting";
 
   function updateBadge() {
-    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | Custom SSR+Bloom+IBL | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | PBR + AO + IBL + Custom SSR | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function paintAtWorld(x, z, mode) {
@@ -699,12 +742,13 @@ async function startThree() {
       new THREE.MeshPhysicalMaterial({
         color: colorFromId(remoteId),
         aoMap: aoTexture,
-        aoMapIntensity: 0.42,
-        roughness: 0.26,
-        metalness: 0.16,
-        clearcoat: 0.38,
-        clearcoatRoughness: 0.18,
-        envMapIntensity: 1.45,
+        roughnessMap: roughnessNoise,
+        aoMapIntensity: 0.38,
+        roughness: 0.24,
+        metalness: 0.14,
+        clearcoat: 0.34,
+        clearcoatRoughness: 0.2,
+        envMapIntensity: 1.55,
       })
     );
     remoteMesh.castShadow = true;
