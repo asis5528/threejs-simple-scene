@@ -2,8 +2,6 @@
 import { EffectComposer } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/EffectComposer.js?module";
 import { RenderPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/RenderPass.js?module";
 import { SSRPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSRPass.js?module";
-import { SSAOPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SSAOPass.js?module";
-import { SAOPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/SAOPass.js?module";
 import { UnrealBloomPass } from "https://unpkg.com/three@0.162.0/examples/jsm/postprocessing/UnrealBloomPass.js?module";
 import { RoomEnvironment } from "https://unpkg.com/three@0.162.0/examples/jsm/environments/RoomEnvironment.js?module";
 
@@ -41,6 +39,7 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
+const BUILD_VERSION = "2026.02.15-hotfix4";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
 
@@ -379,8 +378,6 @@ async function startThree() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     if (composer) composer.setSize(window.innerWidth, window.innerHeight);
     if (ssrPass) ssrPass.setSize(window.innerWidth, window.innerHeight);
-    if (ssaoPass) ssaoPass.setSize(window.innerWidth, window.innerHeight);
-    if (ssgiApproxPass) ssgiApproxPass.setSize(window.innerWidth, window.innerHeight);
     if (bloomPass) bloomPass.setSize(window.innerWidth, window.innerHeight);
   }
   window.addEventListener("resize", onResize);
@@ -391,12 +388,10 @@ async function startThree() {
   let netState = "connecting";
   let composer = null;
   let ssrPass = null;
-  let ssaoPass = null;
-  let ssgiApproxPass = null;
   let bloomPass = null;
 
   function updateBadge() {
-    setBadge(`WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | SSR+SSAO+SSGI* | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
+    setBadge(`Build ${BUILD_VERSION} | WASD + SPACE Jump | ${paintMode.toUpperCase()} (P) | SSR+Bloom | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function paintAtWorld(x, z, mode) {
@@ -535,19 +530,6 @@ async function startThree() {
   ssrPass.distanceAttenuation = true;
   ssrPass.fresnel = true;
   composer.addPass(ssrPass);
-
-  ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
-  ssaoPass.kernelRadius = 22;
-  ssaoPass.minDistance = 0.003;
-  ssaoPass.maxDistance = 0.18;
-  composer.addPass(ssaoPass);
-
-  ssgiApproxPass = new SAOPass(scene, camera, false, true);
-  ssgiApproxPass.params.saoBias = 0.35;
-  ssgiApproxPass.params.saoIntensity = 0.008;
-  ssgiApproxPass.params.saoScale = 8;
-  ssgiApproxPass.params.saoKernelRadius = 64;
-  composer.addPass(ssgiApproxPass);
 
   bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.8, 0.85);
   composer.addPass(bloomPass);
