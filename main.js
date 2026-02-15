@@ -10,9 +10,7 @@ function setBadge(text) {
 function randomId(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
-  for (let i = 0; i < len; i += 1) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
+  for (let i = 0; i < len; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
 }
 
@@ -27,6 +25,11 @@ function colorFromId(id) {
 function sanitizeName(name, fallback) {
   const trimmed = (name || "").trim().slice(0, 18);
   return trimmed || fallback;
+}
+
+function sanitizeRoom(room) {
+  const cleaned = (room || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24);
+  return cleaned || "lobby";
 }
 
 function makeNameSprite(text) {
@@ -82,6 +85,114 @@ function setNameSpriteText(sprite, text) {
   if (oldMap) oldMap.dispose();
 }
 
+function createStartUI(defaultName, defaultRoom) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.background = "rgba(2,6,12,0.72)";
+    overlay.style.zIndex = "1000";
+    overlay.style.backdropFilter = "blur(6px)";
+
+    const card = document.createElement("div");
+    card.style.width = "min(92vw, 420px)";
+    card.style.padding = "18px";
+    card.style.borderRadius = "14px";
+    card.style.background = "#101a2a";
+    card.style.border = "1px solid #2a3d5f";
+    card.style.boxShadow = "0 18px 50px rgba(0,0,0,0.35)";
+
+    const title = document.createElement("div");
+    title.textContent = "Join Ball Room";
+    title.style.color = "#eef5ff";
+    title.style.font = "700 22px Segoe UI";
+    title.style.marginBottom = "12px";
+
+    const nameLabel = document.createElement("label");
+    nameLabel.textContent = "Username";
+    nameLabel.style.display = "block";
+    nameLabel.style.color = "#c8d8f0";
+    nameLabel.style.font = "600 13px Segoe UI";
+    nameLabel.style.marginBottom = "6px";
+
+    const nameInput = document.createElement("input");
+    nameInput.value = defaultName;
+    nameInput.maxLength = 18;
+    nameInput.placeholder = "Your name";
+    nameInput.style.width = "100%";
+    nameInput.style.boxSizing = "border-box";
+    nameInput.style.marginBottom = "12px";
+    nameInput.style.padding = "10px 12px";
+    nameInput.style.borderRadius = "10px";
+    nameInput.style.border = "1px solid #35507b";
+    nameInput.style.background = "#0a1220";
+    nameInput.style.color = "#e9f3ff";
+
+    const roomLabel = document.createElement("label");
+    roomLabel.textContent = "Room";
+    roomLabel.style.display = "block";
+    roomLabel.style.color = "#c8d8f0";
+    roomLabel.style.font = "600 13px Segoe UI";
+    roomLabel.style.marginBottom = "6px";
+
+    const roomInput = document.createElement("input");
+    roomInput.value = defaultRoom;
+    roomInput.maxLength = 24;
+    roomInput.placeholder = "lobby";
+    roomInput.style.width = "100%";
+    roomInput.style.boxSizing = "border-box";
+    roomInput.style.marginBottom = "14px";
+    roomInput.style.padding = "10px 12px";
+    roomInput.style.borderRadius = "10px";
+    roomInput.style.border = "1px solid #35507b";
+    roomInput.style.background = "#0a1220";
+    roomInput.style.color = "#e9f3ff";
+
+    const hint = document.createElement("div");
+    hint.textContent = "Share the same room with friends to see each other in realtime.";
+    hint.style.color = "#9fb3d4";
+    hint.style.font = "12px Segoe UI";
+    hint.style.marginBottom = "14px";
+
+    const joinBtn = document.createElement("button");
+    joinBtn.textContent = "Join";
+    joinBtn.style.width = "100%";
+    joinBtn.style.padding = "10px 12px";
+    joinBtn.style.border = "0";
+    joinBtn.style.borderRadius = "10px";
+    joinBtn.style.background = "#4ea1ff";
+    joinBtn.style.color = "#041124";
+    joinBtn.style.font = "700 14px Segoe UI";
+    joinBtn.style.cursor = "pointer";
+
+    card.appendChild(title);
+    card.appendChild(nameLabel);
+    card.appendChild(nameInput);
+    card.appendChild(roomLabel);
+    card.appendChild(roomInput);
+    card.appendChild(hint);
+    card.appendChild(joinBtn);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    const submit = () => {
+      const chosenName = sanitizeName(nameInput.value, defaultName);
+      const chosenRoom = sanitizeRoom(roomInput.value);
+      document.body.removeChild(overlay);
+      resolve({ playerName: chosenName, roomId: chosenRoom });
+    };
+
+    joinBtn.addEventListener("click", submit);
+    nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    roomInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+
+    setTimeout(() => nameInput.focus(), 0);
+  });
+}
+
 function startFallback2D() {
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -99,7 +210,6 @@ function startFallback2D() {
   function draw(t) {
     const w = canvas.width;
     const h = canvas.height;
-
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, "#0f1522");
     bg.addColorStop(1, "#06090f");
@@ -122,7 +232,21 @@ function startFallback2D() {
   requestAnimationFrame(draw);
 }
 
-function startThree() {
+async function startThree() {
+  const sessionId = randomId();
+  const params = new URLSearchParams(window.location.search);
+  const defaultName = sanitizeName(params.get("name") || localStorage.getItem("ball_player_name") || `Player-${sessionId}`, `Player-${sessionId}`);
+  const defaultRoom = sanitizeRoom(params.get("room") || localStorage.getItem("ball_room") || "lobby");
+
+  const joinData = await createStartUI(defaultName, defaultRoom);
+  const playerName = joinData.playerName;
+  const roomId = joinData.roomId;
+
+  localStorage.setItem("ball_player_name", playerName);
+  localStorage.setItem("ball_room", roomId);
+  const nextUrl = `${window.location.pathname}?room=${encodeURIComponent(roomId)}&name=${encodeURIComponent(playerName)}`;
+  history.replaceState(null, "", nextUrl);
+
   let renderer;
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
@@ -170,31 +294,11 @@ function startThree() {
   ball.position.set(0, radius, 0);
   ball.castShadow = true;
   scene.add(ball);
-
-  const sessionId = randomId();
-  const params = new URLSearchParams(window.location.search);
-  const roomId = params.get("room") || "lobby";
-  const defaultName = `Player-${sessionId}`;
-  const savedName = localStorage.getItem("ball_player_name");
-  const queryName = params.get("name");
-  let playerName = sanitizeName(queryName || savedName || defaultName, defaultName);
-
-  if (!queryName) {
-    const entered = window.prompt("Enter your player name", playerName);
-    playerName = sanitizeName(entered || playerName, defaultName);
-    localStorage.setItem("ball_player_name", playerName);
-  }
-
-  const localLabel = makeNameSprite(playerName);
-  ball.add(localLabel);
+  ball.add(makeNameSprite(playerName));
 
   const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false };
-  window.addEventListener("keydown", (e) => {
-    if (e.code in keys) keys[e.code] = true;
-  });
-  window.addEventListener("keyup", (e) => {
-    if (e.code in keys) keys[e.code] = false;
-  });
+  window.addEventListener("keydown", (e) => { if (e.code in keys) keys[e.code] = true; });
+  window.addEventListener("keyup", (e) => { if (e.code in keys) keys[e.code] = false; });
 
   const velocity = new THREE.Vector3(0, 0, 0);
   const inputDir = new THREE.Vector3(0, 0, 0);
@@ -219,7 +323,7 @@ function startThree() {
   let netState = "connecting";
 
   function updateBadge() {
-    setBadge(`WASD Ball Physics | ${playerName} (${sessionId}) | Room ${roomId} | ${netState}`);
+    setBadge(`WASD Ball Physics | ${playerName} (${sessionId}) | Room ${roomId} | ${netState} | Peers ${remotes.size}`);
   }
 
   function createRemoteBall(peerId, remoteId, remoteName) {
@@ -234,23 +338,28 @@ function startThree() {
     const label = makeNameSprite(remoteName || `Player-${remoteId}`);
     remoteMesh.add(label);
 
-    remotes.set(peerId, {
+    const now = performance.now();
+    const remote = {
       id: remoteId,
       name: remoteName || `Player-${remoteId}`,
       mesh: remoteMesh,
       label,
-      targetPos: remoteMesh.position.clone(),
-      targetQuat: remoteMesh.quaternion.clone(),
-      lastSeen: performance.now(),
-    });
+      netPos: remoteMesh.position.clone(),
+      netVel: new THREE.Vector3(),
+      netQuat: remoteMesh.quaternion.clone(),
+      netTs: now,
+      lastSeen: now,
+    };
 
-    return remotes.get(peerId);
+    remotes.set(peerId, remote);
+    updateBadge();
+    return remote;
   }
 
   async function initRealtime() {
     try {
       const { joinRoom } = await import("https://cdn.jsdelivr.net/npm/trystero/+esm");
-      room = joinRoom({ appId: "asis5528-ball-physics-v1" }, roomId);
+      room = joinRoom({ appId: "asis5528-ball-physics-v2" }, roomId);
 
       const [send, get] = room.makeAction("state");
       sendState = send;
@@ -263,10 +372,14 @@ function startThree() {
             px: ball.position.x,
             py: ball.position.y,
             pz: ball.position.z,
+            vx: velocity.x,
+            vy: velocity.y,
+            vz: velocity.z,
             qx: ball.quaternion.x,
             qy: ball.quaternion.y,
             qz: ball.quaternion.z,
             qw: ball.quaternion.w,
+            ts: Date.now(),
           }, peerId);
         }
       });
@@ -280,6 +393,7 @@ function startThree() {
         if (remote.label && remote.label.material && remote.label.material.map) remote.label.material.map.dispose();
         if (remote.label && remote.label.material) remote.label.material.dispose();
         remotes.delete(peerId);
+        updateBadge();
       });
 
       get((payload, peerId) => {
@@ -294,8 +408,10 @@ function startThree() {
           setNameSpriteText(remote.label, remoteName);
         }
 
-        remote.targetPos.set(payload.px || 0, payload.py || radius, payload.pz || 0);
-        remote.targetQuat.set(payload.qx || 0, payload.qy || 0, payload.qz || 0, payload.qw || 1);
+        remote.netPos.set(payload.px || 0, payload.py || radius, payload.pz || 0);
+        remote.netVel.set(payload.vx || 0, payload.vy || 0, payload.vz || 0);
+        remote.netQuat.set(payload.qx || 0, payload.qy || 0, payload.qz || 0, payload.qw || 1);
+        remote.netTs = payload.ts || Date.now();
         remote.lastSeen = performance.now();
       });
 
@@ -342,22 +458,16 @@ function startThree() {
     const dampFactor = Math.max(0, 1 - damping * dt);
     velocity.x *= dampFactor;
     velocity.z *= dampFactor;
-
     velocity.y += gravity * dt;
 
     ball.position.addScaledVector(velocity, dt);
 
     if (ball.position.y < radius) {
       ball.position.y = radius;
-      if (Math.abs(velocity.y) > 0.2) {
-        velocity.y = -velocity.y * bounce;
-      } else {
-        velocity.y = 0;
-      }
+      velocity.y = Math.abs(velocity.y) > 0.2 ? -velocity.y * bounce : 0;
     }
 
     const limit = planeHalf - radius;
-
     if (ball.position.x > limit) {
       ball.position.x = limit;
       velocity.x = -Math.abs(velocity.x) * wallBounce;
@@ -383,11 +493,13 @@ function startThree() {
 
     const stalePeers = [];
     for (const [peerId, remote] of remotes.entries()) {
-      const alpha = 1 - Math.exp(-10 * dt);
-      remote.mesh.position.lerp(remote.targetPos, alpha);
-      remote.mesh.quaternion.slerp(remote.targetQuat, alpha);
+      const ageSec = Math.min(Math.max((Date.now() - remote.netTs) / 1000, 0), 0.35);
+      const predicted = remote.netPos.clone().addScaledVector(remote.netVel, ageSec);
+      const alpha = 1 - Math.exp(-18 * dt);
+      remote.mesh.position.lerp(predicted, alpha);
+      remote.mesh.quaternion.slerp(remote.netQuat, 1 - Math.exp(-14 * dt));
 
-      if (performance.now() - remote.lastSeen > 15000) {
+      if (performance.now() - remote.lastSeen > 12000) {
         scene.remove(remote.mesh);
         remote.mesh.geometry.dispose();
         remote.mesh.material.dispose();
@@ -397,13 +509,14 @@ function startThree() {
       }
     }
     for (const peerId of stalePeers) remotes.delete(peerId);
+    if (stalePeers.length) updateBadge();
 
     const targetCam = new THREE.Vector3(ball.position.x, 8, ball.position.z + 11);
-    camera.position.lerp(targetCam, 1 - Math.exp(-5 * dt));
+    camera.position.lerp(targetCam, 1 - Math.exp(-6 * dt));
     camera.lookAt(ball.position.x, radius * 0.7, ball.position.z);
 
     netTick += dt;
-    if (sendState && netTick > 0.05) {
+    if (sendState && netTick > 1 / 30) {
       netTick = 0;
       sendState({
         id: sessionId,
@@ -411,10 +524,14 @@ function startThree() {
         px: ball.position.x,
         py: ball.position.y,
         pz: ball.position.z,
+        vx: velocity.x,
+        vy: velocity.y,
+        vz: velocity.z,
         qx: ball.quaternion.x,
         qy: ball.quaternion.y,
         qz: ball.quaternion.z,
         qw: ball.quaternion.w,
+        ts: Date.now(),
       });
     }
 
