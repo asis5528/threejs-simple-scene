@@ -7,6 +7,23 @@ function setBadge(text) {
   if (badge) badge.textContent = text;
 }
 
+function randomId(len = 6) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < len; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+function colorFromId(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) % 360;
+  const c = new THREE.Color();
+  c.setHSL(h / 360, 0.7, 0.58);
+  return c;
+}
+
 function startFallback2D() {
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -121,7 +138,100 @@ function startThree() {
   }
   window.addEventListener("resize", onResize);
 
+  const sessionId = randomId();
+  const params = new URLSearchParams(window.location.search);
+  const roomId = params.get("room") || "lobby";
+
+  const remotes = new Map();
+  let sendState = null;
+  let room = null;
+  let netState = "connecting";
+
+  function updateBadge() {
+    setBadge(`WASD Ball Physics | ID ${sessionId} | Room ${roomId} | ${netState}`);
+  }
+
+  function createRemoteBall(peerId, remoteId) {
+    const remoteMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(radius, 32, 24),
+      new THREE.MeshStandardMaterial({ color: colorFromId(remoteId), roughness: 0.4, metalness: 0.15 })
+    );
+    remoteMesh.castShadow = true;
+    remoteMesh.position.set(0, radius, 0);
+    scene.add(remoteMesh);
+
+    remotes.set(peerId, {
+      id: remoteId,
+      mesh: remoteMesh,
+      targetPos: remoteMesh.position.clone(),
+      targetQuat: remoteMesh.quaternion.clone(),
+      lastSeen: performance.now(),
+    });
+
+    return remotes.get(peerId);
+  }
+
+  async function initRealtime() {
+    try {
+      const { joinRoom } = await import("https://cdn.jsdelivr.net/npm/trystero/+esm");
+      room = joinRoom({ appId: "asis5528-ball-physics-v1" }, roomId);
+
+      const [send, get] = room.makeAction("state");
+      sendState = send;
+
+      room.onPeerJoin((peerId) => {
+        if (sendState) {
+          sendState({
+            id: sessionId,
+            px: ball.position.x,
+            py: ball.position.y,
+            pz: ball.position.z,
+            qx: ball.quaternion.x,
+            qy: ball.quaternion.y,
+            qz: ball.quaternion.z,
+            qw: ball.quaternion.w,
+          }, peerId);
+        }
+      });
+
+      room.onPeerLeave((peerId) => {
+        const remote = remotes.get(peerId);
+        if (!remote) return;
+        scene.remove(remote.mesh);
+        remote.mesh.geometry.dispose();
+        remote.mesh.material.dispose();
+        remotes.delete(peerId);
+      });
+
+      get((payload, peerId) => {
+        if (!payload || !payload.id || payload.id === sessionId) return;
+
+        let remote = remotes.get(peerId);
+        if (!remote) remote = createRemoteBall(peerId, payload.id);
+
+        remote.targetPos.set(payload.px || 0, payload.py || radius, payload.pz || 0);
+        remote.targetQuat.set(payload.qx || 0, payload.qy || 0, payload.qz || 0, payload.qw || 1);
+        remote.lastSeen = performance.now();
+      });
+
+      netState = "online";
+      updateBadge();
+
+      window.addEventListener("beforeunload", () => {
+        if (room && room.leave) room.leave();
+      });
+    } catch (err) {
+      console.warn("Realtime disabled:", err);
+      netState = "offline";
+      updateBadge();
+    }
+  }
+
+  updateBadge();
+  initRealtime();
+
   const clock = new THREE.Clock();
+  let netTick = 0;
 
   function animate() {
     const dt = Math.min(clock.getDelta(), 0.033);
@@ -186,15 +296,44 @@ function startThree() {
       ball.rotateOnWorldAxis(rollAxis, angularSpeed * dt);
     }
 
+    const stalePeers = [];
+    for (const [peerId, remote] of remotes.entries()) {
+      const alpha = 1 - Math.exp(-10 * dt);
+      remote.mesh.position.lerp(remote.targetPos, alpha);
+      remote.mesh.quaternion.slerp(remote.targetQuat, alpha);
+
+      if (performance.now() - remote.lastSeen > 15000) {
+        scene.remove(remote.mesh);
+        remote.mesh.geometry.dispose();
+        remote.mesh.material.dispose();
+        stalePeers.push(peerId);
+      }
+    }
+    for (const peerId of stalePeers) remotes.delete(peerId);
+
     const targetCam = new THREE.Vector3(ball.position.x, 8, ball.position.z + 11);
     camera.position.lerp(targetCam, 1 - Math.exp(-5 * dt));
     camera.lookAt(ball.position.x, radius * 0.7, ball.position.z);
+
+    netTick += dt;
+    if (sendState && netTick > 0.05) {
+      netTick = 0;
+      sendState({
+        id: sessionId,
+        px: ball.position.x,
+        py: ball.position.y,
+        pz: ball.position.z,
+        qx: ball.quaternion.x,
+        qy: ball.quaternion.y,
+        qz: ball.quaternion.z,
+        qw: ball.quaternion.w,
+      });
+    }
 
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
   }
 
-  setBadge("WASD Ball Physics");
   animate();
 }
 
