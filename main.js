@@ -34,9 +34,14 @@ function sanitizeRoom(room) {
 }
 
 const APP_ID = "asis5528-ball-physics";
-const BUILD_VERSION = "2026.02.15-hotfix12";
+const BUILD_VERSION = "2026.02.15-hotfix13";
 const PUBNUB_PUBLISH_KEY = "demo";
 const PUBNUB_SUBSCRIBE_KEY = "demo";
+
+function ensureUv2(geometry) {
+  if (!geometry.attributes.uv || geometry.attributes.uv2) return;
+  geometry.setAttribute("uv2", new THREE.BufferAttribute(geometry.attributes.uv.array, 2));
+}
 
 function makeNameSprite(text) {
   const c = document.createElement("canvas");
@@ -287,7 +292,8 @@ function createPostPipeline(renderer, camera, width, height) {
       viewMatrixInv: { value: new THREE.Matrix4() },
       resolution: { value: new THREE.Vector2(width, height) },
       bloomStrength: { value: 0.38 },
-      ssrStrength: { value: 0.22 },
+      ssrStrength: { value: 0.32 },
+      aoStrength: { value: 0.55 },
       maxSteps: { value: 24.0 },
       stride: { value: 0.18 },
     },
@@ -309,6 +315,7 @@ function createPostPipeline(renderer, camera, width, height) {
       uniform mat4 viewMatrixInv;
       uniform float bloomStrength;
       uniform float ssrStrength;
+      uniform float aoStrength;
       uniform float maxSteps;
       uniform float stride;
 
@@ -331,6 +338,7 @@ function createPostPipeline(renderer, camera, width, height) {
         float depth = texture2D(tDepth, vUv).r;
 
         vec3 refl = vec3(0.0);
+        float ao = 0.0;
         if (depth < 0.999) {
           vec2 du = vec2(1.0 / resolution.x, 0.0);
           vec2 dv = vec2(0.0, 1.0 / resolution.y);
@@ -340,6 +348,12 @@ function createPostPipeline(renderer, camera, width, height) {
           vec3 n = normalize(cross(vx, vy));
           vec3 v = normalize(vp);
           vec3 r = normalize(reflect(v, n));
+
+          float d1 = texture2D(tDepth, vUv + du * 2.0).r;
+          float d2 = texture2D(tDepth, vUv - du * 2.0).r;
+          float d3 = texture2D(tDepth, vUv + dv * 2.0).r;
+          float d4 = texture2D(tDepth, vUv - dv * 2.0).r;
+          ao = clamp((abs(depth - d1) + abs(depth - d2) + abs(depth - d3) + abs(depth - d4)) * 3.2, 0.0, 1.0);
 
           vec4 world = viewMatrixInv * vec4(vp, 1.0);
           float floorMask = smoothstep(0.7, 0.0, abs(world.y));
@@ -366,7 +380,8 @@ function createPostPipeline(renderer, camera, width, height) {
           refl = hitColor * hit * floorMask * grazing * ssrStrength;
         }
 
-        vec3 color = base + bloom + refl;
+        vec3 litBase = base * (1.0 - ao * aoStrength);
+        vec3 color = litBase + bloom + refl;
         gl_FragColor = vec4(color, 1.0);
       }
     `,
@@ -520,9 +535,31 @@ async function startThree() {
   paintTexture.needsUpdate = true;
   paintTexture.colorSpace = THREE.SRGBColorSpace;
 
+  const aoCanvas = document.createElement("canvas");
+  const aoCtx = aoCanvas.getContext("2d");
+  aoCanvas.width = 256;
+  aoCanvas.height = 256;
+  const aoGrad = aoCtx.createRadialGradient(128, 128, 16, 128, 128, 128);
+  aoGrad.addColorStop(0, "#ffffff");
+  aoGrad.addColorStop(1, "#8c8c8c");
+  aoCtx.fillStyle = aoGrad;
+  aoCtx.fillRect(0, 0, 256, 256);
+  const aoTexture = new THREE.CanvasTexture(aoCanvas);
+  aoTexture.needsUpdate = true;
+
+  const floorGeo = new THREE.PlaneGeometry(planeHalf * 2, planeHalf * 2);
+  ensureUv2(floorGeo);
   const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(planeHalf * 2, planeHalf * 2),
-    new THREE.MeshStandardMaterial({ map: paintTexture, roughness: 0.9, metalness: 0.02 })
+    floorGeo,
+    new THREE.MeshPhysicalMaterial({
+      map: paintTexture,
+      aoMap: aoTexture,
+      aoMapIntensity: 0.9,
+      roughness: 0.78,
+      metalness: 0.08,
+      clearcoat: 0.12,
+      clearcoatRoughness: 0.42,
+    })
   );
   floor.rotation.x = -Math.PI * 0.5;
   floor.receiveShadow = true;
@@ -540,9 +577,19 @@ async function startThree() {
   ];
 
   const platforms = platformDefs.map((p) => {
+    const geo = new THREE.BoxGeometry(p.sx, p.sy, p.sz);
+    ensureUv2(geo);
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(p.sx, p.sy, p.sz),
-      new THREE.MeshStandardMaterial({ color: p.c, roughness: 0.55, metalness: 0.22, envMapIntensity: 1.1 })
+      geo,
+      new THREE.MeshPhysicalMaterial({
+        color: p.c,
+        aoMap: aoTexture,
+        aoMapIntensity: 0.85,
+        roughness: 0.42,
+        metalness: 0.24,
+        clearcoat: 0.18,
+        clearcoatRoughness: 0.32,
+      })
     );
     mesh.position.set(p.x, p.y, p.z);
     mesh.castShadow = true;
@@ -552,9 +599,19 @@ async function startThree() {
   });
 
   const radius = 0.45;
+  const ballGeo = new THREE.SphereGeometry(radius, 48, 32);
+  ensureUv2(ballGeo);
   const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 48, 32),
-    new THREE.MeshStandardMaterial({ color: 0x6db3ff, roughness: 0.35, metalness: 0.2 })
+    ballGeo,
+    new THREE.MeshPhysicalMaterial({
+      color: 0x6db3ff,
+      aoMap: aoTexture,
+      aoMapIntensity: 0.45,
+      roughness: 0.22,
+      metalness: 0.18,
+      clearcoat: 0.5,
+      clearcoatRoughness: 0.12,
+    })
   );
   ball.position.set(0, radius, 0);
   ball.castShadow = true;
@@ -618,9 +675,19 @@ async function startThree() {
   }
 
   function createRemoteBall(peerId, remoteId, remoteName) {
+    const rGeo = new THREE.SphereGeometry(radius, 32, 24);
+    ensureUv2(rGeo);
     const remoteMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(radius, 32, 24),
-      new THREE.MeshStandardMaterial({ color: colorFromId(remoteId), roughness: 0.4, metalness: 0.15 })
+      rGeo,
+      new THREE.MeshPhysicalMaterial({
+        color: colorFromId(remoteId),
+        aoMap: aoTexture,
+        aoMapIntensity: 0.42,
+        roughness: 0.26,
+        metalness: 0.16,
+        clearcoat: 0.38,
+        clearcoatRoughness: 0.18,
+      })
     );
     remoteMesh.castShadow = true;
     remoteMesh.position.set(0, radius, 0);
