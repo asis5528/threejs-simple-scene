@@ -24,6 +24,64 @@ function colorFromId(id) {
   return c;
 }
 
+function sanitizeName(name, fallback) {
+  const trimmed = (name || "").trim().slice(0, 18);
+  return trimmed || fallback;
+}
+
+function makeNameSprite(text) {
+  const c = document.createElement("canvas");
+  const ctx = c.getContext("2d");
+  c.width = 512;
+  c.height = 128;
+
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.fillStyle = "rgba(10,16,28,0.7)";
+  const pad = 12;
+  const w = c.width - pad * 2;
+  const h = c.height - pad * 2;
+  const r = 20;
+  ctx.beginPath();
+  ctx.moveTo(pad + r, pad);
+  ctx.lineTo(pad + w - r, pad);
+  ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + r);
+  ctx.lineTo(pad + w, pad + h - r);
+  ctx.quadraticCurveTo(pad + w, pad + h, pad + w - r, pad + h);
+  ctx.lineTo(pad + r, pad + h);
+  ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - r);
+  ctx.lineTo(pad, pad + r);
+  ctx.quadraticCurveTo(pad, pad, pad + r, pad);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "rgba(173,210,255,0.45)";
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  ctx.fillStyle = "#f4f9ff";
+  ctx.font = "bold 54px Segoe UI";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, c.width / 2, c.height / 2 + 2);
+
+  const texture = new THREE.CanvasTexture(c);
+  texture.needsUpdate = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(2.5, 0.62, 1);
+  sprite.position.set(0, 1.2, 0);
+  return sprite;
+}
+
+function setNameSpriteText(sprite, text) {
+  const next = makeNameSprite(text);
+  const oldMat = sprite.material;
+  const oldMap = oldMat && oldMat.map;
+  sprite.material = next.material;
+  if (oldMat) oldMat.dispose();
+  if (oldMap) oldMap.dispose();
+}
+
 function startFallback2D() {
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -113,6 +171,23 @@ function startThree() {
   ball.castShadow = true;
   scene.add(ball);
 
+  const sessionId = randomId();
+  const params = new URLSearchParams(window.location.search);
+  const roomId = params.get("room") || "lobby";
+  const defaultName = `Player-${sessionId}`;
+  const savedName = localStorage.getItem("ball_player_name");
+  const queryName = params.get("name");
+  let playerName = sanitizeName(queryName || savedName || defaultName, defaultName);
+
+  if (!queryName) {
+    const entered = window.prompt("Enter your player name", playerName);
+    playerName = sanitizeName(entered || playerName, defaultName);
+    localStorage.setItem("ball_player_name", playerName);
+  }
+
+  const localLabel = makeNameSprite(playerName);
+  ball.add(localLabel);
+
   const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false };
   window.addEventListener("keydown", (e) => {
     if (e.code in keys) keys[e.code] = true;
@@ -138,20 +213,16 @@ function startThree() {
   }
   window.addEventListener("resize", onResize);
 
-  const sessionId = randomId();
-  const params = new URLSearchParams(window.location.search);
-  const roomId = params.get("room") || "lobby";
-
   const remotes = new Map();
   let sendState = null;
   let room = null;
   let netState = "connecting";
 
   function updateBadge() {
-    setBadge(`WASD Ball Physics | ID ${sessionId} | Room ${roomId} | ${netState}`);
+    setBadge(`WASD Ball Physics | ${playerName} (${sessionId}) | Room ${roomId} | ${netState}`);
   }
 
-  function createRemoteBall(peerId, remoteId) {
+  function createRemoteBall(peerId, remoteId, remoteName) {
     const remoteMesh = new THREE.Mesh(
       new THREE.SphereGeometry(radius, 32, 24),
       new THREE.MeshStandardMaterial({ color: colorFromId(remoteId), roughness: 0.4, metalness: 0.15 })
@@ -160,9 +231,14 @@ function startThree() {
     remoteMesh.position.set(0, radius, 0);
     scene.add(remoteMesh);
 
+    const label = makeNameSprite(remoteName || `Player-${remoteId}`);
+    remoteMesh.add(label);
+
     remotes.set(peerId, {
       id: remoteId,
+      name: remoteName || `Player-${remoteId}`,
       mesh: remoteMesh,
+      label,
       targetPos: remoteMesh.position.clone(),
       targetQuat: remoteMesh.quaternion.clone(),
       lastSeen: performance.now(),
@@ -183,6 +259,7 @@ function startThree() {
         if (sendState) {
           sendState({
             id: sessionId,
+            n: playerName,
             px: ball.position.x,
             py: ball.position.y,
             pz: ball.position.z,
@@ -200,14 +277,22 @@ function startThree() {
         scene.remove(remote.mesh);
         remote.mesh.geometry.dispose();
         remote.mesh.material.dispose();
+        if (remote.label && remote.label.material && remote.label.material.map) remote.label.material.map.dispose();
+        if (remote.label && remote.label.material) remote.label.material.dispose();
         remotes.delete(peerId);
       });
 
       get((payload, peerId) => {
         if (!payload || !payload.id || payload.id === sessionId) return;
 
+        const remoteName = sanitizeName(payload.n || `Player-${payload.id}`, `Player-${payload.id}`);
         let remote = remotes.get(peerId);
-        if (!remote) remote = createRemoteBall(peerId, payload.id);
+        if (!remote) remote = createRemoteBall(peerId, payload.id, remoteName);
+
+        if (remote.name !== remoteName) {
+          remote.name = remoteName;
+          setNameSpriteText(remote.label, remoteName);
+        }
 
         remote.targetPos.set(payload.px || 0, payload.py || radius, payload.pz || 0);
         remote.targetQuat.set(payload.qx || 0, payload.qy || 0, payload.qz || 0, payload.qw || 1);
@@ -306,6 +391,8 @@ function startThree() {
         scene.remove(remote.mesh);
         remote.mesh.geometry.dispose();
         remote.mesh.material.dispose();
+        if (remote.label && remote.label.material && remote.label.material.map) remote.label.material.map.dispose();
+        if (remote.label && remote.label.material) remote.label.material.dispose();
         stalePeers.push(peerId);
       }
     }
@@ -320,6 +407,7 @@ function startThree() {
       netTick = 0;
       sendState({
         id: sessionId,
+        n: playerName,
         px: ball.position.x,
         py: ball.position.y,
         pz: ball.position.z,
